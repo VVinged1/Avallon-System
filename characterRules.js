@@ -17,7 +17,7 @@ export function equipmentFits(item,partName,part) {
   const slots=Array.isArray(item.slots)?item.slots:[item.slot||'any'];
   return slots.includes('any')||slots.includes(partName)||slots.includes(part?.slot);
 }
-export function itemActive(item) { return item.quantity>0 && (item.kind==='implant' || !item.criticalMax || item.criticalDamage<item.criticalMax); }
+export function itemActive(item) { return item.quantity>0 && (item.kind==='prosthesis' || !item.criticalMax || item.criticalDamage<item.criticalMax); }
 export function armorSummary(o) {
   const total=(o.inventory?.items||[]).filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart&&itemActive(i)).reduce((sum,i)=>sum+i.armor,0);
   const key=total<=0?null:total<=35?'light_armor':total<=70?'medium_armor':'heavy_armor';
@@ -38,8 +38,8 @@ export function effectiveAvallon(base) {
   for(const [key,value]of Object.entries(base.skills||{})){const k=register(key,base.skillLabels[key]||key,value,base.skillCategories[key]);if(k===key){available.add(k);direct.add(k);}}
   for(const i of o.inventory?.items||[]) {
     if(!itemActive(i))continue;
-    if(i.kind==='resource'||(['armor','shield','implant'].includes(i.kind)&&i.equippedPart))rows.push({id:i.id,name:i.name,bonuses:['resource','implant'].includes(i.kind)?{...i.bonuses,rangeReduction:{}}:i.bonuses,passive:true,implant:i.kind==='implant'});
-    if(i.kind==='implant'&&i.equippedPart)for(const a of i.abilities||[]) {
+    if(i.kind==='resource'||(['armor','shield','prosthesis','artifact'].includes(i.kind)&&i.equippedPart))rows.push({id:i.id,name:i.name,bonuses:['resource','prosthesis'].includes(i.kind)?{...i.bonuses,rangeReduction:{}}:i.bonuses,passive:true,implant:i.kind==='prosthesis'});
+    if(i.kind==='prosthesis'&&i.equippedPart)for(const a of i.abilities||[]) {
       if(a.kind&&a.kind!=='skill')continue;
       const key=register('implant:'+i.id+':'+a.id,a.name,a.level,'abilities',i.name,true);
       if(!direct.has(key)){o.skillDescriptions??={};o.skillDescriptions[key]??=a.description||'';o.skillPerks[key]??=[];}
@@ -79,8 +79,8 @@ export function reconcileEquipment(tracker) {
   const inv=tracker.avallon.inventory;if(!inv)return;
   inv.baseArmor??={}; inv.baseMax??={};
   for(const [partName,part] of Object.entries(tracker.body)) {
-    const equipped=inv.items.filter(i=>['armor','shield','implant'].includes(i.kind)&&i.equippedPart===partName);
-    const implantHp=equipped.filter(i=>i.kind==='implant'&&itemActive(i)).reduce((sum,i)=>sum+(Number(i.criticalMax)||0),0);
+    const equipped=inv.items.filter(i=>['armor','shield','prosthesis'].includes(i.kind)&&i.equippedPart===partName);
+    const implantHp=equipped.filter(i=>i.kind==='prosthesis'&&itemActive(i)).reduce((sum,i)=>sum+(Number(i.criticalMax)||0),0);
     const armor=equipped.filter(i=>['armor','shield'].includes(i.kind)&&i.quantity>0);
     const pool={max:armor.reduce((sum,i)=>sum+(Number(i.criticalMax)||0),0),remaining:armor.reduce((sum,i)=>sum+Math.max(0,(Number(i.criticalMax)||0)-(Number(i.criticalDamage)||0)),0)};
     inv.armorHp??={};const previous=inv.armorHp[partName]?.remaining||0;
@@ -108,7 +108,7 @@ export function reconcileEquipment(tracker) {
 export function absorbEquipmentCritical(tracker,partName,critical) {
   let remaining=Math.max(0,Number(critical)||0),absorbed=0;
   const items=tracker.avallon.inventory?.items||[];
-  for(const i of items.filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart===partName&&i.criticalMax>0&&itemActive(i)).sort((a,b)=>(a.kind==='implant')-(b.kind==='implant'))) {
+  for(const i of items.filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart===partName&&i.criticalMax>0&&itemActive(i)).sort((a,b)=>(a.kind==='prosthesis')-(b.kind==='prosthesis'))) {
     const amount=Math.min(remaining,i.criticalMax-i.criticalDamage);i.criticalDamage+=amount;remaining-=amount;absorbed+=amount;if(!remaining)break;
   }
   reconcileEquipment(tracker);return {remaining,absorbed};

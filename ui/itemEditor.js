@@ -2,16 +2,14 @@ import {SKILL_CATEGORIES,skillCap} from '../avallonConfig.js';
 import {WEAPON_CATEGORIES,RANGE_BANDS,normalizeRangeReduction} from '../rangeRules.js';
 import { esc } from './characterView.js';
 import { ATTRIBUTES } from '../characterRules.js';
-export const ITEM_TYPES=[['consumable','Usable'],['resource','Resource'],['ammo','Ammunition'],['magazine','Magazine'],['weapon','Weapon'],['armor','Armor'],['shield','Shield'],['implant','Implant']];
-export function itemEditor({existing={},type='resource',skills=[],parts=[],ammunition=[],magazines=[]}) {
+export const ITEM_TYPES=[['consumable','Usable'],['resource','Resource'],['ammo','Ammunition'],['weapon','Weapon'],['armor','Armor'],['shield','Shield'],['prosthesis','Prosthesis'],['artifact','Artifact']];
+export function itemEditor({existing={},type='resource',skills=[],parts=[],ammunition=[]}) {
   const dialog=document.createElement('dialog');dialog.className='od-dialog od-item-editor';
-  const field=(name,label,value='',inputType='text',max=999)=>`<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType==='number'?`min="${['damage','accuracy','penetration','abilityAccuracy'].includes(name)||name.startsWith('abilityAttr:')||name==='abilityBonusValue'?-999:0}" max="${max}" step="${name==='abilityCost'?0.5:1}"`:'maxlength="120"'}></label>`;
+  const field=(name,label,value='',inputType='text',max=999)=>`<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType==='number'?`min="${['damage','accuracy','penetration','abilityAccuracy'].includes(name)||name.startsWith('abilityAttr:')||name==='abilityBonusValue'?-999:0}" max="${max}" step="${['abilityCost','effectAmount'].includes(name)?0.5:1}"`:'maxlength="120"'}></label>`;
   const select=(name,label,options,value)=>`<label>${esc(label)}<select name="${name}">${options.map(([k,l])=>`<option value="${esc(k)}" ${k===value?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`;
   const checkbox=(name,label,checked)=>`<label class="od-check"><input name="${name}" type="checkbox" ${checked?'checked':''}>${esc(label)}</label>`;
-  const values={...existing,kind:type,acceptsMagazines:existing.acceptsMagazines!==false};
+  const values={...existing,kind:type,acceptsMagazines:false};
   values.slots??=[existing.slot||'any'];
-  values.acceptedMagazineIds??=existing.id?magazines.filter(m=>m.id===existing.magazineId||(m.capacity===existing.capacity&&(!m.loaded||(existing.ammoIds||[]).includes(m.loadedAmmoId)))).map(m=>m.id):[];
-  const magazineChoices=[...new Map(magazines.map(m=>[JSON.stringify([m.name,m.capacity]),m])).values()];
   const skillChoices=[...skills];
   const findSkill=(rows,name)=>rows.find(([key,label])=>[key,label].some(v=>String(v).trim().toLowerCase()===String(name).trim().toLowerCase()));
   const ownSkill=name=>findSkill(skills,name);
@@ -49,9 +47,9 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
     const data=Object.fromEntries(new FormData(form));Object.assign(values,data);
     if(form.elements.useSkill){const input=String(values.useSkill||'').trim();const match=skillChoices.find(([key,label])=>key.toLowerCase()===input.toLowerCase()||label.toLowerCase()===input.toLowerCase());values.useSkill=match?match[1]:input;}
     if(form.elements.acceptsMagazines)values.acceptsMagazines=form.elements.acceptsMagazines.checked;
-    if(form.querySelector('[name="magazineCompatible"]'))values.acceptedMagazineIds=[...form.querySelectorAll('[name="magazineCompatible"]:checked')].map(e=>e.value);
     if(form.querySelector('[data-equipment-slots]'))values.slots=[...form.querySelectorAll('[name="equipmentSlot"]:checked')].map(e=>e.value);
     values.playerRemovable=!!form.elements.playerRemovable?.checked;
+    if(values.kind==='artifact'&&form.querySelector('[name^="activeAttr:"]')){values.activeBonuses={attributes:{},skills:{}};for(const input of form.querySelectorAll('[name^="activeAttr:"],[name^="activeSkill:"]')){const [type,...key]=input.name.split(':');if(Number(input.value))values.activeBonuses[type==='activeAttr'?'attributes':'skills'][key.join(':')]=Number(input.value);}}
     const bonuses={attributes:{},skills:{},skillCategories:{}};
     for(const input of form.querySelectorAll('[name^="attr:"],[name^="skill:"]')) {
       const [kind,...key]=input.name.split(':');const value=Number(input.value)||0;if(value)bonuses[kind==='attr'?'attributes':'skills'][key.join(':')]=value;
@@ -73,27 +71,31 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
       if(!values.subtype||values.subtype==='grenade')html+='<p class="cp-muted">Grenades have no action yet.</p>';
     }
     if(kind==='resource')html+=bonusEditor(values.bonuses,true,false);
+    if(kind==='artifact'){
+      html+=field('chargeMax','Maximum charges',values.chargeMax??5,'number')+field('charges','Current charges · GM correction',values.charges??values.chargeMax??5,'number')+field('chargeCost','Charges per use',values.chargeCost??1,'number')+select('artifactEffect','Active effect',[['property','Passive property only'],['mana','Restore mana'],['heal','Heal body HP'],['bonus','Activate bonuses']],values.artifactEffect||'property');
+      if(['mana','heal'].includes(values.artifactEffect))html+=field('effectAmount',values.artifactEffect==='mana'?'Mana restored':'Critical wounds restored',values.effectAmount??1,'number');
+      html+=bonusEditor(values.bonuses,true,false);
+      if(values.artifactEffect==='bonus')html+='<fieldset class="od-bonuses"><legend>Active bonuses · spend charges</legend>'+ATTRIBUTES.map(k=>field('activeAttr:'+k,k,values.activeBonuses?.attributes?.[k]||0,'number')).join('')+skillChoices.map(([k,label])=>field('activeSkill:'+k,label+' · level bonus',values.activeBonuses?.skills?.[k]||0,'number')).join('')+'</fieldset>';
+      html+='<p class="cp-muted">Passive bonuses and properties work while equipped. Active effects use this artifact’s charges. The GM restores charges manually. Healing affects body wounds, not armor.</p>';
+    }
     if(kind==='ammo')html+=field('damage','Damage / round',values.damage??0,'number')+field('penetration','Armor penetration',values.penetration??0,'number');
-    if(kind==='magazine')html+=field('capacity','Capacity',values.capacity??6,'number')+field('loaded','Rounds · GM correction',values.loaded??0,'number')+select('loadedAmmoId','Ammunition', [['','Empty'],...ammunition.map(a=>[a.id,a.name])],values.loadedAmmoId||'');
     if(kind==='weapon') {
       html+=select('weaponKind','Weapon type',[['melee','Melee'],['ranged','Ranged']],values.weaponKind||'melee')+field('accuracy','Accuracy',values.accuracy??0,'number');
       if(values.weaponKind==='ranged') {
         html+=select('weaponCategory','Weapon category',WEAPON_CATEGORIES,values.weaponCategory||'')+rangeEditor('weaponRange:',values.rangeReduction);
-        html+=checkbox('acceptsMagazines','Accepts detachable magazines',values.acceptsMagazines);
-        if(values.acceptsMagazines)html+='<fieldset><legend>Compatible magazines</legend>'+magazineChoices.map(m=>checkbox('magazineCompatible',m.name+' · '+m.capacity+' rounds',values.acceptedMagazineIds.some(id=>magazines.some(reference=>reference.id===id&&reference.name===m.name&&reference.capacity===m.capacity))).replace('name="magazineCompatible"','name="magazineCompatible" value="'+esc(m.id)+'"')).join('')+(magazines.length?'':'<p class="cp-muted">Create a magazine in Items first.</p>')+'</fieldset>';
-        else html+=field('capacity','Built-in magazine capacity',values.capacity||6,'number')+field('loaded','Loaded rounds · GM correction',values.loaded||0,'number')+select('loadedAmmoId','Loaded ammunition',[['','Empty'],...ammunition.map(a=>[a.id,a.name])],values.loadedAmmoId||'')+'<fieldset><legend>Compatible ammunition</legend>'+ammunition.map(a=>checkbox('ammoCompatible',a.name,(values.ammoIds||[]).includes(a.id)).replace('name="ammoCompatible"','name="ammoCompatible" value="'+esc(a.id)+'"')).join('')+'</fieldset>';
+html+=field('capacity','Internal capacity',values.capacity||6,'number')+field('loaded','Loaded rounds · GM correction',values.loaded||0,'number')+select('loadedAmmoId','Loaded ammunition',[['','Empty'],...ammunition.map(a=>[a.id,a.name])],values.loadedAmmoId||'')+'<fieldset><legend>Compatible ammunition</legend>'+ammunition.map(a=>checkbox('ammoCompatible',a.name,(values.ammoIds||[]).includes(a.id)).replace('name="ammoCompatible"','name="ammoCompatible" value="'+esc(a.id)+'"')).join('')+'</fieldset>';
       }
       else html+=field('damage','Damage',values.damage??0,'number');
     }
-    if(['armor','shield','implant'].includes(kind)) {
-      html+=field('armor','Armor',values.armor??0,'number')+field('criticalMax',kind==='implant'?'Body part HP bonus':'Critical durability',values.criticalMax??1,'number')+(kind==='implant'?'':field('criticalDamage','Critical damage taken',values.criticalDamage??0,'number'))+'<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots · choose allowed parts</legend>'+[['any','Any part'],...parts,...values.slots.filter(key=>key!=='any'&&!parts.some(([k])=>k===key)).map(key=>[key,key])].map(([key,label])=>checkbox('equipmentSlot',label,values.slots.includes(key)).replace('name="equipmentSlot"','name="equipmentSlot" value="'+esc(key)+'"')).join('')+'</fieldset>';
-      if(kind==='implant')html+='<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
-      if(kind==='implant')html+=checkbox('playerRemovable','Player may equip / remove this implant',values.playerRemovable)+bonusEditor(values.bonuses,true,false)+`<fieldset><legend>Granted abilities · available only while equipped</legend><div data-abilities>${(values.abilities||[]).map(abilityRow).join('')}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
+    if(['armor','shield','prosthesis'].includes(kind)) {
+      html+=field('armor','Armor',values.armor??0,'number')+field('criticalMax',kind==='prosthesis'?'Body part HP bonus':'Critical durability',values.criticalMax??1,'number')+(kind==='prosthesis'?'':field('criticalDamage','Critical damage taken',values.criticalDamage??0,'number'))+'<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots · choose allowed parts</legend>'+[['any','Any part'],...parts,...values.slots.filter(key=>key!=='any'&&!parts.some(([k])=>k===key)).map(key=>[key,key])].map(([key,label])=>checkbox('equipmentSlot',label,values.slots.includes(key)).replace('name="equipmentSlot"','name="equipmentSlot" value="'+esc(key)+'"')).join('')+'</fieldset>';
+      if(kind==='prosthesis')html+='<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
+      if(kind==='prosthesis')html+=checkbox('playerRemovable','Player may equip / remove this prosthesis',values.playerRemovable)+bonusEditor(values.bonuses,true,false)+`<fieldset><legend>Granted abilities · available only while equipped</legend><div data-abilities>${(values.abilities||[]).map(abilityRow).join('')}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
     }
     host.innerHTML=html;
     if(form.elements.weaponCategory&&!existing.id)form.elements.weaponCategory.required=true;
     // Bonus inputs accept signed modifiers.
-    for(const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"]'))input.min='-999';
+    for(const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"],[name^="activeAttr:"],[name^="activeSkill:"]'))input.min='-999';
     form.elements.quantity.closest('label').hidden=kind==='weapon'||(kind==='magazine'&&!!existing.id);
   }
   form.addEventListener('change',e=>{
@@ -101,7 +103,7 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
       const row=e.target.closest('.od-ability-row'),ability=readAbilityRow(row),scrollTop=dialog.scrollTop;
       const template=document.createElement('template');template.innerHTML=abilityRow(ability);const replacement=template.content.firstElementChild;row.replaceWith(replacement);replacement.querySelector('[name="abilityKind"]').focus({preventScroll:true});dialog.scrollTop=scrollTop;return;
     }
-    if(['kind','subtype','weaponKind','acceptsMagazines'].includes(e.target.name)){collect();render();}
+    if(['kind','subtype','weaponKind','acceptsMagazines','artifactEffect'].includes(e.target.name)){collect();render();}
   });
   form.addEventListener('input',e=>{if(e.target.name==='newBonusSkillName')form.elements.newBonusSkillCategory.closest('label').hidden=!!ownSkill(e.target.value);});
   form.addEventListener('click',e=>{
@@ -117,7 +119,7 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
   return new Promise(resolve=>{
     const finish=v=>{dialog.close();dialog.remove();resolve(v);};
     form.querySelector('[data-cancel]').onclick=()=>finish(null);dialog.addEventListener('cancel',e=>{e.preventDefault();finish(null);});
-    form.addEventListener('submit',e=>{e.preventDefault();collect();if(['armor','shield','implant'].includes(values.kind)&&!values.slots.length){host.querySelector('[data-equipment-slots]').insertAdjacentHTML('beforeend','<p class="cp-muted">Choose at least one allowed slot.</p>');return;}if(!values.name.trim()){form.elements.name.setCustomValidity('Enter a name.');form.elements.name.reportValidity();form.elements.name.oninput=()=>form.elements.name.setCustomValidity('');return;}finish(values);});dialog.showModal();
+    form.addEventListener('submit',e=>{e.preventDefault();collect();if(['armor','shield','prosthesis'].includes(values.kind)&&!values.slots.length){host.querySelector('[data-equipment-slots]').insertAdjacentHTML('beforeend','<p class="cp-muted">Choose at least one allowed slot.</p>');return;}if(!values.name.trim()){form.elements.name.setCustomValidity('Enter a name.');form.elements.name.reportValidity();form.elements.name.oninput=()=>form.elements.name.setCustomValidity('');return;}finish(values);});dialog.showModal();
   });
 }
 export function skillEditor(o,key) {

@@ -1,4 +1,4 @@
-import {findInventoryEntry,saveInventoryEntry,newId,magazineCompatible} from './inventory.js';
+import {findInventoryEntry,saveInventoryEntry,newId} from './inventory.js';
 export const ITEM_POOL_PREFIX='com.avallon.system/item-pool/';
 export const ITEM_POOL_FORMAT='avallon-item-pool';
 const TYPES=new Set(['item','ammo','magazine','weapon-melee','weapon-ranged']);
@@ -19,19 +19,15 @@ export function captureBlueprint(tracker,type,id) {
   else if(type.startsWith('weapon-')) {
     const kind=type.slice(7);values={kind:'weapon',weaponKind:kind,name:entry.name,accuracy:entry.accuracy,damage:entry.damage,...(kind==='ranged'&&entry.weaponCategory?{weaponCategory:entry.weaponCategory}:{}),...(kind==='ranged'&&Object.values(entry.rangeReduction||{}).some(Boolean)?{rangeReduction:structuredClone(entry.rangeReduction)}:{})};
     if(kind==='ranged') {
-      values.acceptsMagazines=entry.acceptsMagazines!==false;values.loaded=0;values.loadedAmmoId='';values.magazineId='';
-      if(values.acceptsMagazines) {
-        let magazines=o.inventory.magazines.filter(m=>m.id===entry.magazineId||magazineCompatible(o,entry,m));
-        if(!magazines.length&&entry.capacity)magazines=[{name:entry.name+' magazine',capacity:entry.capacity}];
-        dependencies.magazines=uniqueDefinitions(magazines,m=>({name:m.name,capacity:m.capacity})).map((m,index)=>({id:'mag-'+index,...m}));values.acceptedMagazineIds=dependencies.magazines.map(m=>m.id);
-      } else {
+      values.acceptsMagazines=false;values.loaded=0;values.loadedAmmoId='';values.magazineId='';
         dependencies.ammunition=uniqueDefinitions(o.ammunition.filter(a=>entry.ammoIds.includes(a.id)),ammoDefinition).map((a,index)=>({id:'ammo-'+index,...a}));
         values.capacity=entry.capacity;values.ammoIds=dependencies.ammunition.map(a=>a.id);
-      }
     }
   } else {
-    values={};for(const key of ['kind','name','description','armor','criticalMax','playerRemovable','slots','subtype','healCritical','abilities','bonuses'])if(entry[key]!==undefined)values[key]=structuredClone(entry[key]);
+    values={};for(const key of ['kind','name','description','armor','criticalMax','playerRemovable','slots','subtype','healCritical','abilities','bonuses','chargeMax','charges','chargeCost','artifactEffect','effectAmount','activeBonuses'])if(entry[key]!==undefined)values[key]=structuredClone(entry[key]);
+    if(values.kind==='artifact')values.charges=values.chargeMax;
     values.quantity=1;values.criticalDamage=0;values.slots??=[entry.slot||'any'];
+    if(values.activeBonuses?.skills)values.activeBonuses.skills=Object.fromEntries(Object.entries(values.activeBonuses.skills).map(([key,value])=>[o.skillLabels[key]||key,value]));
     if(values.bonuses) {
       const skills={};for(const [key,value]of Object.entries(values.bonuses.skills||{})){const label=o.skillLabels[key]||key;skills[label]=(skills[label]||0)+value;}values.bonuses.skills=skills;if(values.bonuses.skillCategories){values.bonuses.skillCategories=Object.fromEntries(Object.entries(values.bonuses.skillCategories).map(([key,value])=>[o.skillLabels[key]||key,value]));}
     }
@@ -42,13 +38,16 @@ export function captureBlueprint(tracker,type,id) {
   return {format:'avallon-item-blueprint',version:1,type,values,dependencies};
 }
 export function validateBlueprint(raw) {
+  if(raw?.values?.kind==='implant')raw={...raw,values:{...raw.values,kind:'prosthesis'}};
   if(raw?.format!=='avallon-item-blueprint'||raw.version!==1||!TYPES.has(raw.type)||!raw.values||typeof raw.values.name!=='string'||!raw.values.name.trim()||raw.values.name.length>120)throw new Error('Invalid item pool definition.');
-  if(!['item','consumable','medical','tool','resource','armor','shield','implant','ammo','magazine','weapon'].includes(raw.values.kind))throw new Error('Invalid item type.');
+  if(!['item','consumable','medical','tool','resource','armor','shield','prosthesis','artifact','ammo','magazine','weapon'].includes(raw.values.kind))throw new Error('Invalid item type.');
   const expected=raw.type.startsWith('weapon-')?'weapon':raw.type==='item'?null:raw.type;if(raw.type==='item'&&['weapon','ammo','magazine'].includes(raw.values.kind))throw new Error('Item type does not match its definition.');
   if(expected&&raw.values.kind!==expected)throw new Error('Item type does not match its definition.');
   for(const key of ['ammunition','magazines'])if(!Array.isArray(raw.dependencies?.[key])||raw.dependencies[key].length>200||raw.dependencies[key].some(d=>!d||typeof d.id!=='string'||typeof d.name!=='string'))throw new Error('Invalid item dependencies.');
   if(blueprintText(raw).length>200000)throw new Error('Item definition is too large.');
-  return structuredClone(raw);
+  const result=structuredClone(raw);
+  if(result.type==='weapon-ranged'&&result.values.acceptsMagazines!==false){result.values.acceptsMagazines=false;result.values.capacity=result.values.capacity||result.dependencies.magazines[0]?.capacity||1;result.values.ammoIds=result.values.ammoIds||[];result.dependencies.magazines=[];result.values.acceptedMagazineIds=[];}
+  return result;
 }
 export async function blueprintId(blueprint) {
   const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(blueprintText(blueprint)));return [...new Uint8Array(hash)].map(n=>n.toString(16).padStart(2,'0')).join('');
@@ -59,9 +58,9 @@ export function poolEntries(metadata) {
   return {entries:entries.sort((a,b)=>a.blueprint.values.name.localeCompare(b.blueprint.values.name)),errors};
 }
 export function parsePoolJSON(raw) {
-  if(raw?.format!==ITEM_POOL_FORMAT||raw.version!==1||!Array.isArray(raw.entries)||raw.entries.length>2000)throw new Error('Choose an Avallon item pool JSON (version 1).');return raw.entries.map(validateBlueprint);
+  if(raw?.format!==ITEM_POOL_FORMAT||raw.version!==1||!Array.isArray(raw.entries)||raw.entries.length>2000)throw new Error('Choose an Avallon item pool JSON (version 1).');return raw.entries.filter(b=>b?.type!=='magazine').map(validateBlueprint);
 }
-export function exportPool(entries) {return {format:ITEM_POOL_FORMAT,version:1,entries:entries.map(e=>e.blueprint)};}
+export function exportPool(entries) {return {format:ITEM_POOL_FORMAT,version:1,entries:entries.filter(e=>e.blueprint.type!=='magazine').map(e=>e.blueprint)};}
 export function copyBlueprint(tracker,raw,quantity=1,id=newId()) {
   const blueprint=validateBlueprint(raw),o=tracker.avallon,values=structuredClone(blueprint.values),ammoIds=new Map(),magazineIds=new Map();
   if(!Number.isInteger(quantity)||quantity<1||quantity>999999)throw new Error('Invalid item quantity.');
@@ -80,6 +79,7 @@ export function copyBlueprint(tracker,raw,quantity=1,id=newId()) {
   if(values.bonuses?.skills) {
     const skills={};for(const [label,value]of Object.entries(values.bonuses.skills)){const key=Object.keys(o.skills).find(key=>key.toLowerCase()===label.toLowerCase()||(o.skillLabels[key]||key).toLowerCase()===label.toLowerCase())||label;skills[key]=(skills[key]||0)+value;}const categories={};for(const [label,value]of Object.entries(values.bonuses.skillCategories||{})){const key=Object.keys(o.skills).find(key=>key.toLowerCase()===label.toLowerCase()||(o.skillLabels[key]||key).toLowerCase()===label.toLowerCase())||label;categories[key]=value;}if(Object.keys(categories).length)values.bonuses.skillCategories=categories;values.bonuses.skills=skills;
   }
+  if(values.activeBonuses?.skills)values.activeBonuses.skills=Object.fromEntries(Object.entries(values.activeBonuses.skills).map(([label,value])=>[Object.keys(o.skills).find(k=>k.toLowerCase()===label.toLowerCase()||String(o.skillLabels[k]||k).toLowerCase()===label.toLowerCase())||label,value]));
   if(blueprint.type==='ammo') {
     const existing=o.ammunition.find(a=>sameAmmo(a,values));if(existing){if(existing.quantity+quantity>999999)throw new Error('Ammo reserve is full.');existing.quantity+=quantity;return existing.id;}
   }

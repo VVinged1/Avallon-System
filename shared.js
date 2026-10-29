@@ -370,7 +370,12 @@ export function sanitizeAvallonData(raw) {
   next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
   next.weapons.ranged = sanitizeWeapons(raw.weapons?.ranged, true);
   next.ammunition = sanitizeAmmunition(raw.ammunition);
-  next.inventory = normalizeInventory(raw.inventory, next.weapons.ranged,'',next.skillLabels);
+  // Preserve loaded weapon rounds; return detached magazine contents to reserve once.
+  const mounted=new Set((raw.weapons?.ranged||[]).map(w=>w.magazineId).filter(Boolean));
+  for(const m of raw.inventory?.magazines||[])if(!mounted.has(m.id)){
+    const ammo=next.ammunition.find(a=>a.id===m.loadedAmmoId);if(ammo)ammo.quantity=Math.min(999999,ammo.quantity+Math.max(0,Math.floor(Number(m.loaded)||0)));
+  }
+  next.inventory = normalizeInventory({...raw.inventory,magazines:[]}, next.weapons.ranged,'',next.skillLabels);
   next.effects = normalizeEffects(raw.effects);
   next.abilities=normalizeAbilities(raw.abilities);next.mana=normalizeMana(raw.mana);
   if(raw.vehicle?.enabled)next.vehicle={enabled:true,pilotTokenId:String(raw.vehicle.pilotTokenId||'').trim().slice(0,120)};

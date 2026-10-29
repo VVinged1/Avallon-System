@@ -8,7 +8,7 @@ import {ARMOR_TRAINING,ATTRIBUTES,effectiveAvallon} from '../characterRules.js';
 import {findInventoryEntry,saveInventoryEntry,deleteInventoryEntry} from '../inventory.js';
 import {reloadMagazine} from '../ammunition.js';
 import { buildText, buildSceneUpload } from '@owlbear-rodeo/sdk';
-import { newId, swapMagazine, fillMagazine, emptyMagazine, setMagazineRounds, equipItem, unequipItem, consumeItem } from '../inventory.js';
+import { newId, equipItem, unequipItem, consumeItem } from '../inventory.js';
 import { makeTemplate, instantiateTemplate, readLibrary, writeLibrary, emptyLibrary, mergeLibraries, normalizeLibrary, libraryFromScenes, LIBRARY_ITEM_KEY, LIBRARY_STORAGE_KEY } from '../profiles.js';
 import { inventoryView, templatesView, esc } from './characterView.js';
 
@@ -33,7 +33,7 @@ export function installCharacterTools(host) {
   try { library=readLibrary(window.localStorage,sanitize); } catch(e) { library=emptyLibrary();storageError=e.message; }
   let poolMetadata={},catalog={entries:[],errors:0},poolDialog=null,scanTimer=null,scanPromise=null,scanFingerprint='',scanWarning='',poolWarning='',scanRetryAt=0;
   const knownBlueprintIds=new Map();
-  const refreshPool=(metadata,warning=poolWarning)=>{poolMetadata=metadata||{};poolWarning=warning;catalog={...poolEntries(poolMetadata),warning:[poolWarning,scanWarning].filter(Boolean).join(' ')};poolDialog?.refresh();render();};
+  const refreshPool=(metadata,warning=poolWarning)=>{poolMetadata=metadata||{};poolWarning=warning;catalog={...poolEntries(poolMetadata),entries:poolEntries(poolMetadata).entries.filter(e=>e.blueprint.type!=='magazine'),warning:[poolWarning,scanWarning].filter(Boolean).join(' ')};poolDialog?.refresh();render();};
   const requirePoolGM=async()=>{if(getRole()!=='GM'||await OBR.player.getRole()!=='GM')throw new Error('Only the GM can edit the campaign item pool.');};
   const poolStore=createCampaignPoolStore({room:OBR.room,scene:OBR.scene,storage:window.localStorage,roomId:OBR.room.id,requireGM:requirePoolGM,canSync:()=>getRole()==='GM',onChange:refreshPool});
   const readPool=()=>poolStore.read();
@@ -88,11 +88,11 @@ export function installCharacterTools(host) {
       status('Vehicle updated.','success');return;
     }
     const token=check(); const tokenId=token.id, panel=node.closest('#selectedTokenPanel'), id=node.dataset.id;
-    const gmActions=['add-item','edit-item','delete-item','add-mag','fill-mag','set-mag-rounds','empty-mag','delete-mag','mount-mag','apply-template'];
+    const gmActions=['add-item','edit-item','delete-item','apply-template'];
     if(action==='open-item-pool')check(tokenId,true);
     if(gmActions.includes(action)||action.includes('template')||action.includes('library')||action.startsWith('account-')) check(tokenId,true);
-    if(action==='activate-implant'){await host.activateAbility(tokenId,id,node.dataset.abilityId);status('Implant bonuses activated.','success');return;}
-    if(action==='implant-attack'){host.selectImplantAttack(tokenId,node.dataset.key);status('Implant attack selected. Choose a target in Attack.','success');return;}
+    if(action==='activate-implant'){await host.activateAbility(tokenId,id,node.dataset.abilityId);status('Prosthesis bonuses activated.','success');return;}
+    if(action==='implant-attack'){host.selectImplantAttack(tokenId,node.dataset.key);status('Prosthesis attack selected. Choose a target in Attack.','success');return;}
     if(action==='add-item'||action==='edit-entry') {
       check(tokenId,true);const t=host.tracker(token),o=t.avallon,type=node.dataset.entryType||'item';
       const existing=action==='edit-entry'?findInventoryEntry(t,type,id):null;
@@ -167,26 +167,6 @@ export function installCharacterTools(host) {
     } else if(action==='consume') await mutate(tokenId,t=>consumeItem(t,id));
     else if(action==='equip') {const part=readSelect(panel,'data-equip-part',id);await mutate(tokenId,t=>equipItem(t,id,part,getRole()==='GM'));}
     else if(action==='unequip') await mutate(tokenId,t=>unequipItem(t,id,getRole()==='GM'));
-    else if(action==='add-mag') {
-      const value=await formDialog('New magazine',[{name:'name',label:'Name',required:true,value:'Magazine'},{name:'capacity',label:'Capacity',type:'number',min:1,max:999,value:6}]);if(!value)return;
-      const magazine={id:newId(),name:value.name,capacity:Number(value.capacity),loaded:0,loadedAmmoId:''};
-      await mutate(tokenId,t=>{if(t.avallon.inventory.magazines.length>=200)throw new Error('Magazine limit is 200.');t.avallon.inventory.magazines.push(magazine);},true);
-    } else if(action==='set-mag-rounds') {
-      const tracker=host.tracker(check(tokenId,true)), o=tracker.avallon;
-      const mag=o.inventory.magazines.find(m=>m.id===id);
-      if(!mag)throw new Error('Magazine no longer exists.');
-      const weapon=o.weapons.ranged.find(w=>w.magazineId===id);
-      const ammo=o.ammunition.filter(a=>!weapon||Array.isArray(weapon.acceptedMagazineIds)||weapon.ammoIds.includes(a.id));
-      const value=await formDialog('GM · Set magazine rounds',[
-        {name:'rounds',label: 'Rounds (0–'+mag.capacity+')',type:'number',min:0,max:mag.capacity,value:mag.loaded,required:true},
-        {name:'ammoId',label:'Ammunition type',value:mag.loadedAmmoId,options:[['','Empty / no ammunition'],...ammo.map(a=>[a.id,a.name])]},
-      ],{message:'Direct GM correction. Ammunition reserve is not changed; this is not a reload.'});
-      if(!value)return;
-      await mutate(tokenId,t=>setMagazineRounds(t.avallon,id,Number(value.rounds),value.ammoId),true);
-    } else if(action==='fill-mag') {const ammoId=readSelect(panel,'data-mag-ammo',id);await mutate(tokenId,t=>fillMagazine(t.avallon,id,ammoId),true);}
-    else if(action==='empty-mag') await mutate(tokenId,t=>emptyMagazine(t.avallon,id),true);
-    else if(action==='delete-mag') await mutate(tokenId,t=>{emptyMagazine(t.avallon,id);t.avallon.inventory.magazines=t.avallon.inventory.magazines.filter(m=>m.id!==id);},true);
-    else if(action==='mount-mag') {const index=Number(node.dataset.index),magId=readSelect(panel,'data-weapon-mag',index);await mutate(tokenId,t=>swapMagazine(t.avallon,index,magId),true);}
     else if(action==='save-template') {
       const value=await formDialog('Save character template',[{name:'name',label:'Template name',required:true,value:token.name||'Character'}],{message:'Saves a healthy character. Owner, target, history and bridge events are excluded.'});if(!value)return;
       if(storageError)throw new Error('Export the unreadable local library before importing a replacement. '+storageError);

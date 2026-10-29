@@ -23,7 +23,7 @@ export function sanitizeMagazine(weapon) {
   return {
     weaponCategory: normalizeWeaponCategory(weapon.weaponCategory),
     rangeReduction: normalizeRangeReduction(weapon.rangeReduction),
-    acceptsMagazines: weapon.acceptsMagazines !== false,
+    acceptsMagazines: false,
     ...(Array.isArray(weapon.acceptedMagazineIds)?{acceptedMagazineIds:[...new Set(weapon.acceptedMagazineIds.filter(id=>typeof id==="string"))].slice(0,200)}:{}),
     ammoIds: [...new Set(Array.isArray(weapon.ammoIds) ? weapon.ammoIds.filter((id) => typeof id === "string") : [])],
     capacity,
@@ -36,7 +36,7 @@ export function reloadMagazine(avallon, weaponIndex, ammoId) {
   const weapon = avallon.weapons.ranged[weaponIndex];
   const ammo = avallon.ammunition.find((item) => item.id === ammoId);
   if (!weapon || !ammo || !weapon.ammoIds.includes(ammoId)) throw new Error("Choose compatible ammunition.");
-  if (weapon.capacity < 1) throw new Error("Set magazine capacity first.");
+  if (weapon.capacity < 1) throw new Error("Set internal capacity first.");
   if (ammo.quantity < 1) throw new Error("Ammo reserve is empty.");
   if (weapon.loadedAmmoId !== ammoId && weapon.loaded > 0) {
     const previous = avallon.ammunition.find((item) => item.id === weapon.loadedAmmoId);
@@ -46,7 +46,7 @@ export function reloadMagazine(avallon, weaponIndex, ammoId) {
     weapon.loaded = 0;
   }
   const count = Math.min(weapon.capacity - weapon.loaded, ammo.quantity);
-  if (count <= 0) throw new Error("Magazine is full or ammo reserve is empty.");
+  if (count <= 0) throw new Error("Internal capacity is full or ammo reserve is empty.");
   weapon.loadedAmmoId = ammoId;
   weapon.loaded += count;
   ammo.quantity -= count;
@@ -59,7 +59,7 @@ export function getAmmoShot(avallon, weaponIndex, ammoId, count) {
     throw new Error("The selected ammunition must be loaded by the GM first.");
   }
   if (!Number.isInteger(count) || count < 1 || count > weapon.loaded || count > weapon.capacity) {
-    throw new Error("Not enough rounds in the magazine.");
+    throw new Error("Not enough rounds in the weapon.");
   }
   return { ammoId, count, damage: ammo.damage * count, penetration: ammo.penetration, name: ammo.name };
 }

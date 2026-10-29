@@ -1,6 +1,7 @@
 import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
 import {manaStatus,spendMana,abilityAttacks,activateAbility} from './magicRules.js';
-import {installMagicTools,magicView} from './ui/magicTools.js';
+import {installArtifactTools} from './ui/artifactTools.js';
+import {installMagicTools} from './ui/magicTools.js';
 import {implantAttacks,resolveAbilitySkill,activateImplantAbility} from './implantAbilities.js';
 import {applyCheckedItemUse,itemUseSummary} from './itemUse.js';
 import {createFieldDrafts,createTokenWriteQueue} from './fieldDrafts.js';
@@ -13,7 +14,6 @@ import { compactHud } from "./ui/compactHud.js";
 import { attributeCards, skillCards, effectChips } from "./ui/characterView.js";
 import { installCharacterTools } from "./ui/characterTools.js";
 import { profileData } from "./profiles.js";
-import { swapMagazine } from "./inventory.js";
 import { Command, buildImage, buildPath, buildRuler } from "@owlbear-rodeo/sdk";
 import { reloadMagazine, getAmmoShot, consumeAmmo, effectiveArmor } from "./ammunition.js";
 import {
@@ -310,7 +310,8 @@ function getSkillStrengthBonusFlag(avallon, skillName) {
 }
 
 function getSkillLabel(avallon, skillName) {
-  return String(avallon?.skillLabels?.[skillName] ?? skillName).trim() || skillName;
+  const ability=[...implantAttacks(avallon||{}),...abilityAttacks(avallon||{})].find(w=>w.selectionKey===skillName);
+  return ability?ability.name:String(avallon?.skillLabels?.[skillName] ?? skillName).trim() || skillName;
 }
 
 function getSortedSkillEntries(avallon) {
@@ -332,10 +333,9 @@ function getAbilitiesSkillEntries(avallon) {
 }
 
 function getAttackSkillEntries(avallon) {
-  const assigned=[...implantAttacks(avallon),...abilityAttacks(avallon)].map(w=>resolveAbilitySkill(avallon,w.boundSkill)).filter(Boolean);
-  return [...new Map([...getCombatSkillEntries(avallon), ...getAbilitiesSkillEntries(avallon),...assigned.map(key=>[key,avallon.skills[key]])]).entries()].filter(
-    ([skillName]) => !ATTACK_ONLY_EXCLUDED_SKILLS.has(skillName),
-  );
+  const attacks=[...implantAttacks(avallon),...abilityAttacks(avallon)];
+  const assigned=attacks.map(w=>resolveAbilitySkill(avallon,w.boundSkill)).filter(Boolean);
+  return [...new Map([...getCombatSkillEntries(avallon),...getAbilitiesSkillEntries(avallon),...assigned.map(key=>[key,avallon.skills[key]])]).entries()].filter(([key])=>!ATTACK_ONLY_EXCLUDED_SKILLS.has(key)).concat(attacks.map(w=>[w.selectionKey,avallon.skills[resolveAbilitySkill(avallon,w.boundSkill)]||0]));
 }
 
 function getAppliedSkillEntries(avallon) {
@@ -1281,11 +1281,23 @@ function getWeaponByName(token, weaponName) {
   return weapons.find((weapon) => (weapon.selectionKey ?? weapon.name) === normalizedWeaponName) ?? getDefaultAttackWeapon(token);
 }
 
+function paintAbilityAttackFields(){
+  if(!activeTokenId)return;const t=getCharacterById(activeTokenId);if(!t)return;
+  for(const prefix of ['data-attack-field','data-manual-attack-field','data-hud-attack-field']){
+    const skill=ui.selectedTokenPanel.querySelector('['+prefix+'="skill"]');
+    const ability=[...implantAttacks(getAvallonData(t)),...abilityAttacks(getAvallonData(t))].find(w=>w.selectionKey===skill?.value);
+    const select=ui.selectedTokenPanel.querySelector('['+prefix+'="weaponName"]');if(select?.closest('label'))select.closest('label').hidden=!!ability;
+    const damage=ui.selectedTokenPanel.querySelector('['+prefix+'="weaponDamage"]');if(damage&&ability){damage.value=ability.damage;damage.disabled=true;}
+  }
+}
 function syncAttackWeaponInputs(tokenId, weaponName, weaponDamage, weaponAccuracy = 0) {
   scheduleRender();
   if (!tokenId) return;
 
-  const chosen=getWeaponByName(getCharacterById(tokenId),weaponName);if(chosen.implantId||chosen.magicAbilityId){const skill=resolveAbilitySkill(getAvallonData(getCharacterById(tokenId)),chosen.boundSkill);if(skill){saveAttackDraftValue(tokenId,'skill',skill);ui.selectedTokenPanel.querySelectorAll('[data-attack-field="skill"],[data-manual-attack-field="skill"],[data-hud-attack-field="skill"]').forEach(field=>field.value=skill);}}
+  const chosen=getWeaponByName(getCharacterById(tokenId),weaponName);
+  if(chosen.implantId||chosen.magicAbilityId){saveAttackDraftValue(tokenId,'skill',weaponName);}
+  else {const stored=attackFormDrafts.get(tokenId);if(stored?.skill?.startsWith('magic:')||stored?.skill?.startsWith('implant:'))saveAttackDraftValue(tokenId,'skill',getCombatSkillEntries(getAvallonData(getCharacterById(tokenId)))[0]?.[0]||'Melee');}
+
   saveAttackDraftValue(tokenId, "weaponName", weaponName);
   saveAttackDraftValue(tokenId, "weaponDamage", String(weaponDamage));
   saveAttackDraftValue(tokenId, "weaponAccuracy", String(weaponAccuracy));
@@ -2842,7 +2854,7 @@ function renderWeaponRow(weapon, type, index, ammunition, disabledAttr) {
           <input type="number" min="-999" max="999" value="${weapon?.accuracy ?? 0}" data-weapon-draft="accuracy" ${disabledAttr}></label>
         <label class="field-stack weapon-melee-fields ${ranged ? "hidden" : ""}"><span class="field-label">Weapon Damage</span>
           <input type="number" min="-999" max="999" value="${weapon?.damage ?? 0}" data-weapon-draft="damage" ${disabledAttr}></label>
-        <label class="field-stack weapon-ranged-fields ${ranged ? "" : "hidden"}"><span class="field-label">Magazine Capacity</span>
+        <label class="field-stack weapon-ranged-fields ${ranged ? "" : "hidden"}"><span class="field-label">Internal Capacity</span>
           <input type="number" min="0" max="999" step="1" value="${weapon?.capacity ?? 0}" data-weapon-draft="capacity" ${disabledAttr}></label>
         ${weapon && ranged ? `<div class="weapon-loaded"><span class="field-label">Loaded</span>
           <strong>${weapon.loaded} / ${weapon.capacity}</strong><span>${escapeHtml(ammunition.find((ammo) => ammo.id === weapon.loadedAmmoId)?.name || "Empty")}</span></div>` : ""}
@@ -2907,7 +2919,6 @@ async function saveWeapon(node) {
     const allWeapons = [...(next.avallon.weapons.melee ?? []), ...(next.avallon.weapons.ranged ?? [])];
     if (allWeapons.some((item) => item !== weapon && item.name === name)) throw new Error("A weapon with this name already exists.");
     if (weapon && type !== nextType) {
-      if (type === "ranged" && weapon.magazineId) swapMagazine(next.avallon, index, "");
       if (type === "ranged" && weapon.loaded > 0) {
         const loadedAmmo = next.avallon.ammunition.find((ammo) => ammo.id === weapon.loadedAmmoId);
         if (loadedAmmo) loadedAmmo.quantity += weapon.loaded;
@@ -2999,20 +3010,13 @@ async function editAmmunition(action, node) {
     data.ammunition ??= [];
     const weapon = data.weapons.ranged[index];
     if (action === "ammo-remove") {
-      if (data.inventory.magazines.some(m => m.loadedAmmoId === ammoId && m.loaded > 0)) throw new Error("Empty all magazines using this ammo first.");
       if (data.weapons.ranged.some((item) => item.loadedAmmoId === ammoId && item.loaded > 0)) throw new Error("Unload this ammunition before removing it.");
       data.ammunition = data.ammunition.filter((item) => item.id !== ammoId);
       for (const item of data.weapons.ranged) item.ammoIds = item.ammoIds.filter((id) => id !== ammoId);
     }
     if (action === "ammo-reload") {
-      if (weapon && !weapon.magazineId) {
-        const id = `reload-mag-${weapon.id}`;
-        if (!data.inventory.magazines.some(m => m.id === id)) data.inventory.magazines.push({id,name:weapon.name+" magazine",capacity:weapon.capacity,loaded:0,loadedAmmoId:""});
-        swapMagazine(data,index,id);
-      }
       reloadMagazine(data, index, reloadId);
     }
-    if (action === "ranged-remove" && weapon?.magazineId) swapMagazine(data, index, "");
     if ((action === "ranged-remove" || action === "ammo-unload") && weapon) {
       const loadedAmmo = data.ammunition.find((item) => item.id === weapon.loadedAmmoId);
       if (weapon.loaded && !loadedAmmo) throw new Error("Loaded ammunition is missing.");
@@ -3393,7 +3397,6 @@ function renderSelectedToken() {
           : ""
       }
       ${characterTools?characterTools.renderVehicle(token):''}
-      ${canUseToken(token)?magicView(data,avallon,isEditable()):''}
       ${canUseToken(token) ? effectChips(avallon,isEditable()) : ""}
       ${canUseToken(token) ? renderCharacteristicsBlock({ avallon }) : ""}
       ${canUseToken(token) ? renderEnglishSkillsBlock({ avallon }, gmOnlyDisabled) : ""}
@@ -4088,7 +4091,6 @@ async function removeWeapon(type = "melee", index) {
 	const weapons = next.avallon.weapons[type] ?? [];
 	const weapon = weapons[index];
 
-	if (type === "ranged" && weapon?.magazineId) swapMagazine(next.avallon, index, "");
 	if (type === "ranged" && weapon?.loaded > 0) {
 	  const ammo = next.avallon.ammunition.find(
 		(item) => item.id === weapon.loadedAmmoId,
@@ -4265,12 +4267,12 @@ async function performAttackOnce({ manualDefense = false } = {}) {
     manualDefense
       ? getActionFieldValue('[data-manual-attack-field="skill"]') || getActionFieldValue('[data-attack-field="skill"]')
       : getActionFieldValue('[data-attack-field="skill"]');
-  const weaponName =
+  const weaponName = (skillName?.startsWith('magic:')||skillName?.startsWith('implant:'))?skillName:
     manualDefense
       ? getActionFieldValue('[data-manual-attack-field="weaponName"]') || getActionFieldValue('[data-attack-field="weaponName"]')
       : getActionFieldValue('[data-attack-field="weaponName"]');
   if(attackerAvallon.pilotMissing)throw Error('Vehicle driver is unavailable. Exit the vehicle or select another driver.');
-  if(weaponName?.startsWith('implant:')&&!implantAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Implant attack is no longer equipped. Select a weapon.');
+  if(weaponName?.startsWith('implant:')&&!implantAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Prosthesis attack is no longer equipped. Select a weapon.');
   if(weaponName?.startsWith('magic:')&&!abilityAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Ability is no longer available. Select an attack.');
   const selectedWeapon = getWeaponByName(attacker, weaponName);
   if((selectedWeapon.magicAbilityId||selectedWeapon.implantId)&&manaStatus(getTrackerData(attacker).avallon).current<(selectedWeapon.cost||0))throw Error('Not enough mana.');
@@ -4453,7 +4455,7 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   await updateTrackerData(attacker.id, (current) => {
     const next = structuredClone(current);
     if(attackerAvallon.pilot?.id&&next.avallon.vehicle?.pilotTokenId!==attackerAvallon.pilot.id)throw Error('Vehicle driver changed. Retry the attack.');
-    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.boundSkill!==selectedWeapon.boundSkill)throw Error('Implant attack changed. Retry the attack.');}
+    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.boundSkill!==selectedWeapon.boundSkill)throw Error('Prosthesis attack changed. Retry the attack.');}
     if(selectedWeapon.magicAbilityId){const ability=abilityAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.cost!==selectedWeapon.cost||ability.damage!==selectedWeapon.damage||ability.boundSkill!==selectedWeapon.boundSkill)throw Error('Ability changed. Retry.');spendMana(next.avallon,ability.cost);}
     if(selectedWeapon.implantId)spendMana(next.avallon,selectedWeapon.cost||0);
     if (shot) {
@@ -5215,6 +5217,13 @@ function bindUiEvents() {
       return;
     }
 
+    if(activeTokenId&&(target.dataset.attackField==='skill'||target.dataset.manualAttackField==='skill')){
+      saveAttackDraftValue(activeTokenId,'skill',target.value);
+      const token=getCharacterById(activeTokenId),ability=[...implantAttacks(getAvallonData(token)),...abilityAttacks(getAvallonData(token))].find(w=>w.selectionKey===target.value);
+      if(ability)syncAttackWeaponInputs(activeTokenId,ability.selectionKey,ability.damage,ability.accuracy);
+      else {const stored=attackFormDrafts.get(activeTokenId);if(stored?.weaponName?.startsWith('magic:')||stored?.weaponName?.startsWith('implant:')){const w=getDefaultAttackWeapon(token);syncAttackWeaponInputs(activeTokenId,w.name,w.damage,w.accuracy);}}
+      scheduleRender();return;
+    }
     if (target.dataset.attackField && activeTokenId) {
       if (target.dataset.attackField === "weaponName") {
         const token = getCharacterById(activeTokenId);
@@ -5467,7 +5476,7 @@ OBR.onReady(async () => {
       defaultHeight: 860,
     });
     characterTools = installCharacterTools({OBR, sanitize:sanitizeTrackerData, tracker:getTrackerData,
-      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:async(tokenId,itemId,abilityId)=>{await updateTrackerData(tokenId,current=>{const next=structuredClone(current);const ability=next.avallon.inventory.items.find(i=>i.id===itemId)?.abilities.find(a=>a.id===abilityId);activateImplantAbility(next,itemId,abilityId);spendMana(next.avallon,ability?.cost||0);return next;});await syncState();scheduleRender();}, setVehicle:setVehicleState, selectImplantAttack:(tokenId,key)=>{const token=getCharacterById(tokenId),weapon=getWeaponByName(token,key);syncAttackWeaponInputs(tokenId,key,weapon.damage,weapon.accuracy);const skill=resolveAbilitySkill(getAvallonData(token),weapon.boundSkill);if(skill)saveAttackDraftValue(tokenId,'skill',skill);scheduleRender();}, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
+      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:async(tokenId,itemId,abilityId)=>{await updateTrackerData(tokenId,current=>{const next=structuredClone(current);const ability=next.avallon.inventory.items.find(i=>i.id===itemId)?.abilities.find(a=>a.id===abilityId);activateImplantAbility(next,itemId,abilityId);spendMana(next.avallon,ability?.cost||0);return next;});await syncState();scheduleRender();}, setVehicle:setVehicleState, selectImplantAttack:(tokenId,key)=>{const token=getCharacterById(tokenId),weapon=getWeaponByName(token,key);syncAttackWeaponInputs(tokenId,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(tokenId,'skill',key);scheduleRender();}, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
       canControl:canUseToken, update:updateTrackerData, refreshOverlay:ensureOverlayForToken,
       render:scheduleRender, status:setStatus, download:downloadTextFile,
       resetDraft:id => { pendingFieldDrafts.clear(id);attackFormDrafts.delete(id); for (const [key,timer] of inputAutosaveTimers) { if (key.startsWith(id+"|")) {clearTimeout(timer);inputAutosaveTimers.delete(key);} } },
@@ -5475,6 +5484,8 @@ OBR.onReady(async () => {
     targetDistance=createTargetDistance({OBR,buildRuler,onRead:paintTargetDistance,context:HUD_MODE?'hud':'main'});
     OBR.scene.grid.onChange(()=>{targetDistance.invalidate();refreshTargetDistance();});
     window.addEventListener('beforeunload',()=>{void targetDistance.clear();});
+    new MutationObserver(()=>paintAbilityAttackFields()).observe(ui.selectedTokenPanel,{childList:true,subtree:true});
+    installArtifactTools({getToken:id=>getCharacterById(id??activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,update:updateTrackerData,render:scheduleRender,status:setStatus});
     installMagicTools({getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
     bindUiEvents();
     await removeAttackTargetContextMenu();

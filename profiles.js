@@ -42,13 +42,10 @@ export function instantiateTemplate(current, template, sanitize) {
   const validated = normalizeLibrary({...emptyLibrary(),templates:[template]},sanitize).templates[0];
   const data = structuredClone(validated.data);
   const ammoIds = new Map(data.avallon.ammunition.map(a => [a.id,newId()]));
-  const magIds = new Map(data.avallon.inventory.magazines.map(m => [m.id,newId()]));
   for (const a of data.avallon.ammunition) a.id = ammoIds.get(a.id);
-  for (const mag of data.avallon.inventory.magazines) { mag.id = magIds.get(mag.id); mag.loadedAmmoId = ammoIds.get(mag.loadedAmmoId) || ''; }
   for (const w of data.avallon.weapons.ranged) {
-    if(w.acceptedMagazineIds)w.acceptedMagazineIds=w.acceptedMagazineIds.map(id=>magIds.get(id)).filter(Boolean);
     w.id = newId(); w.ammoIds = w.ammoIds.map(id => ammoIds.get(id)).filter(Boolean);
-    w.loadedAmmoId = ammoIds.get(w.loadedAmmoId) || ''; w.magazineId = magIds.get(w.magazineId) || '';
+    w.loadedAmmoId = ammoIds.get(w.loadedAmmoId) || ''; w.magazineId = '';
   }
   for (const w of data.avallon.weapons.melee) w.id=newId();
   for (const item of data.avallon.inventory.items) item.id = newId();

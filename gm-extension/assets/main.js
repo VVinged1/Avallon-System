@@ -603,7 +603,7 @@ function normalizeEffects(raw) {
   return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((e) => e && typeof e.id === "string" && !seen.has(e.id) && seen.add(e.id)).map((e) => ({ id: e.id.slice(0, 120), name: String(e.name || "Effect").slice(0, 120), bonuses: normalizeBonuses(e.bonuses), ...e.sourceItemId ? { sourceItemId: String(e.sourceItemId).slice(0, 120) } : {} }));
 }
 function itemActive(item) {
-  return item.quantity > 0 && (item.kind === "implant" || !item.criticalMax || item.criticalDamage < item.criticalMax);
+  return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
 }
 function armorSummary(o) {
   const total = (o.inventory?.items || []).filter((i) => ["armor", "shield"].includes(i.kind) && i.equippedPart && itemActive(i)).reduce((sum, i) => sum + i.armor, 0);
@@ -643,8 +643,8 @@ function effectiveAvallon(base) {
   }
   for (const i of o.inventory?.items || []) {
     if (!itemActive(i)) continue;
-    if (i.kind === "resource" || ["armor", "shield", "implant"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "implant"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "implant" });
-    if (i.kind === "implant" && i.equippedPart) for (const a of i.abilities || []) {
+    if (i.kind === "resource" || ["armor", "shield", "prosthesis", "artifact"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "prosthesis"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "prosthesis" });
+    if (i.kind === "prosthesis" && i.equippedPart) for (const a of i.abilities || []) {
       if (a.kind && a.kind !== "skill") continue;
       const key = register("implant:" + i.id + ":" + a.id, a.name, a.level, "abilities", i.name, true);
       if (!direct.has(key)) {
@@ -706,8 +706,8 @@ function reconcileEquipment(tracker) {
   inv.baseArmor ?? (inv.baseArmor = {});
   inv.baseMax ?? (inv.baseMax = {});
   for (const [partName, part] of Object.entries(tracker.body)) {
-    const equipped = inv.items.filter((i) => ["armor", "shield", "implant"].includes(i.kind) && i.equippedPart === partName);
-    const implantHp = equipped.filter((i) => i.kind === "implant" && itemActive(i)).reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0);
+    const equipped = inv.items.filter((i) => ["armor", "shield", "prosthesis"].includes(i.kind) && i.equippedPart === partName);
+    const implantHp = equipped.filter((i) => i.kind === "prosthesis" && itemActive(i)).reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0);
     const armor = equipped.filter((i) => ["armor", "shield"].includes(i.kind) && i.quantity > 0);
     const pool = { max: armor.reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0), remaining: armor.reduce((sum, i) => sum + Math.max(0, (Number(i.criticalMax) || 0) - (Number(i.criticalDamage) || 0)), 0) };
     inv.armorHp ?? (inv.armorHp = {});
@@ -739,7 +739,7 @@ function reconcileEquipment(tracker) {
 function absorbEquipmentCritical(tracker, partName, critical) {
   let remaining = Math.max(0, Number(critical) || 0), absorbed = 0;
   const items = tracker.avallon.inventory?.items || [];
-  for (const i of items.filter((i2) => ["armor", "shield"].includes(i2.kind) && i2.equippedPart === partName && i2.criticalMax > 0 && itemActive(i2)).sort((a, b) => (a.kind === "implant") - (b.kind === "implant"))) {
+  for (const i of items.filter((i2) => ["armor", "shield"].includes(i2.kind) && i2.equippedPart === partName && i2.criticalMax > 0 && itemActive(i2)).sort((a, b) => (a.kind === "prosthesis") - (b.kind === "prosthesis"))) {
     const amount = Math.min(remaining, i.criticalMax - i.criticalDamage);
     i.criticalDamage += amount;
     remaining -= amount;
@@ -771,20 +771,28 @@ function setCombinedPartHp(tracker, partName, value) {
   part.current = goal;
 }
 
+// magicRules.js
+var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2;
+var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
+function normalizeAbilities(raw) {
+  const seen = /* @__PURE__ */ new Set();
+  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), skill: String(a.skill || "").trim().slice(0, 80), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
+}
+
 // itemGroups.js
 var stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable(value[k])])) : value;
 var itemNameKey = (item) => String(item.name || "").trim().toLocaleLowerCase();
 function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
   const result = [], known = /* @__PURE__ */ new Map();
   for (const item of items) {
-    if (item.equippedPart) {
+    if (item.equippedPart || item.kind === "artifact") {
       result.push(item);
       continue;
     }
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
-    if (!["armor", "shield", "implant"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (item.kind !== "implant") delete definition.abilities;
+    if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
+    if (item.kind !== "prosthesis") delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -809,88 +817,75 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
   return result;
 }
 
+// ui/characterView.js
+var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// artifactRules.js
+var count = (v, max = 999) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
+function normalizeArtifact(raw = {}) {
+  const chargeMax = count(raw.chargeMax);
+  return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
+}
+
 // inventory.js
 var LIMIT = 2e3;
 var int = (v, max = 999999) => Math.min(max, Math.max(0, Math.floor(Number(v) || 0)));
 var text = (v, max = 120) => String(v ?? "").trim().slice(0, max);
-var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "implant"]);
+var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "prosthesis", "artifact"]);
 function rows(raw, map) {
   const seen = /* @__PURE__ */ new Set();
   return (Array.isArray(raw) ? raw : []).slice(0, LIMIT).filter((r) => r && typeof r === "object").map(map).filter((r) => r.id && !seen.has(r.id) && seen.add(r.id));
 }
 function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {}) {
-  const items = rows(raw?.items, (r, i) => ({
-    id: text(r.id || `legacy-item-${i}`),
-    name: text(r.name) || "Item",
-    kind: kinds.has(r.kind) ? r.kind : "item",
-    quantity: int(r.quantity ?? 1),
-    description: text(r.description, 2e3),
-    armor: int(r.armor, 999),
-    subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
-    healCritical: int(r.healCritical ?? 1, 999),
-    useSkill: text(r.useSkill, 80),
-    slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
-    slot: text(r.slot || "any", 40),
-    criticalMax: int(r.criticalMax, 999),
-    criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
-    playerRemovable: r.playerRemovable === true,
-    bonuses: normalizeBonuses(["resource", "implant"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-    abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), skill: text(a.skill, 80) } : {} })),
-    legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
-    equippedPart: text(r.equippedPart, 40),
-    previousArmor: int(r.previousArmor, 999)
-  }));
-  for (const item of [...items]) if (item.equippedPart && ["armor", "shield", "implant"].includes(item.kind) && item.quantity > 1) {
+  const items = rows(raw?.items, (input, i) => {
+    const r = { ...input, kind: input.kind === "implant" ? "prosthesis" : input.kind };
+    return {
+      id: text(r.id || `legacy-item-${i}`),
+      name: text(r.name) || "Item",
+      kind: kinds.has(r.kind) ? r.kind : "item",
+      quantity: int(r.quantity ?? 1),
+      description: text(r.description, 2e3),
+      armor: int(r.armor, 999),
+      subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
+      healCritical: int(r.healCritical ?? 1, 999),
+      useSkill: text(r.useSkill, 80),
+      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
+      slot: text(r.slot || "any", 40),
+      criticalMax: int(r.criticalMax, 999),
+      criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
+      playerRemovable: r.playerRemovable === true,
+      bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), skill: text(a.skill, 80) } : {} })),
+      ...r.kind === "artifact" ? normalizeArtifact(r) : {},
+      legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
+      equippedPart: text(r.equippedPart, 40),
+      previousArmor: int(r.previousArmor, 999)
+    };
+  });
+  for (const item of [...items]) if (item.equippedPart && ["armor", "shield", "prosthesis"].includes(item.kind) && item.quantity > 1) {
     let id = item.id.slice(0, 90) + "-reserve", suffix = 1;
     while (items.some((i) => i.id === id)) id = item.id.slice(0, 90) + "-reserve-" + suffix++;
     items.push({ ...structuredClone(item), id, quantity: item.quantity - 1, equippedPart: "", previousArmor: 0, legacyEquipment: false });
     item.quantity = 1;
   }
   items.splice(0, items.length, ...mergeInventoryStacks(items, preferredId, skillLabels));
-  const magazines = rows(raw?.magazines, (r, i) => ({
-    id: text(r.id || `legacy-magazine-${i}`),
-    name: text(r.name) || "Magazine",
-    description: text(r.description, 2e3),
-    capacity: int(r.capacity, 999),
-    loadedAmmoId: text(r.loadedAmmoId),
-    loaded: int(r.loaded, int(r.capacity, 999))
-  }));
-  const assigned = /* @__PURE__ */ new Set();
-  for (const [i, weapon] of weapons.entries()) {
-    if (weapon.acceptsMagazines === false) {
-      weapon.magazineId = "";
-      continue;
+  const magazines = [];
+  for (const weapon of weapons) {
+    weapon.acceptsMagazines = false;
+    weapon.acceptedMagazineIds = [];
+    weapon.magazineId = "";
+  }
+  for (const item of [...items]) if (item.kind === "artifact" && item.quantity > 1) {
+    const quantity = item.quantity;
+    if (quantity > 1e3 || items.length + quantity - 1 > 2e3) throw Error("Too many artifact instances.");
+    item.quantity = 1;
+    for (let i = 1; i < quantity; i++) {
+      let id = item.id.slice(0, 90) + "-artifact-" + i;
+      while (items.some((x) => x.id === id)) id += "x";
+      items.push({ ...structuredClone(item), id, equippedPart: "" });
     }
-    const requested = text(weapon.magazineId);
-    let id = requested || ((!Object.hasOwn(weapon, "magazineId") || weapon.loaded > 0) && weapon.capacity > 0 ? `legacy-mag-${weapon.id || i}` : "");
-    if (!id) {
-      weapon.magazineId = "";
-      weapon.loaded = 0;
-      weapon.loadedAmmoId = "";
-      continue;
-    }
-    if (assigned.has(id)) id = `recovered-mag-${weapon.id || i}-${i}`;
-    let mag = magazines.find((m) => m.id === id);
-    if (!mag) {
-      mag = { id, name: `${weapon.name} magazine`, description: "", capacity: weapon.capacity, loaded: weapon.loaded, loadedAmmoId: weapon.loadedAmmoId };
-      magazines.push(mag);
-    }
-    weapon.magazineId = id;
-    assigned.add(id);
-    Object.assign(mag, { capacity: weapon.capacity, loaded: weapon.loaded, loadedAmmoId: weapon.loadedAmmoId });
   }
   return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 999)])) };
-}
-
-// ui/characterView.js
-var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-
-// magicRules.js
-var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2;
-var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
-function normalizeAbilities(raw) {
-  const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), skill: String(a.skill || "").trim().slice(0, 80), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 
 // node_modules/@owlbear-rodeo/sdk/lib/api/PlayerApi.js
@@ -4219,7 +4214,7 @@ function sanitizeMagazine(weapon) {
   return {
     weaponCategory: normalizeWeaponCategory(weapon.weaponCategory),
     rangeReduction: normalizeRangeReduction(weapon.rangeReduction),
-    acceptsMagazines: weapon.acceptsMagazines !== false,
+    acceptsMagazines: false,
     ...Array.isArray(weapon.acceptedMagazineIds) ? { acceptedMagazineIds: [...new Set(weapon.acceptedMagazineIds.filter((id) => typeof id === "string"))].slice(0, 200) } : {},
     ammoIds: [...new Set(Array.isArray(weapon.ammoIds) ? weapon.ammoIds.filter((id) => typeof id === "string") : [])],
     capacity,
@@ -4540,7 +4535,12 @@ function sanitizeAvallonData(raw) {
   next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
   next.weapons.ranged = sanitizeWeapons(raw.weapons?.ranged, true);
   next.ammunition = sanitizeAmmunition(raw.ammunition);
-  next.inventory = normalizeInventory(raw.inventory, next.weapons.ranged, "", next.skillLabels);
+  const mounted = new Set((raw.weapons?.ranged || []).map((w) => w.magazineId).filter(Boolean));
+  for (const m of raw.inventory?.magazines || []) if (!mounted.has(m.id)) {
+    const ammo = next.ammunition.find((a) => a.id === m.loadedAmmoId);
+    if (ammo) ammo.quantity = Math.min(999999, ammo.quantity + Math.max(0, Math.floor(Number(m.loaded) || 0)));
+  }
+  next.inventory = normalizeInventory({ ...raw.inventory, magazines: [] }, next.weapons.ranged, "", next.skillLabels);
   next.effects = normalizeEffects(raw.effects);
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
@@ -5068,9 +5068,9 @@ async function flushOverlayEnsure(tokenId, pending) {
 function rollPercent() {
   return Math.floor(Math.random() * 100) + 1;
 }
-function rollDice(sides, modifier2 = 0, count = 1) {
+function rollDice(sides, modifier2 = 0, count2 = 1) {
   const safeSides = clamp(Number(sides) || 0, 2, Number.MAX_SAFE_INTEGER);
-  const safeCount = clamp(Number(count) || 0, 1, 100);
+  const safeCount = clamp(Number(count2) || 0, 1, 100);
   const rolls = Array.from({ length: safeCount }, () => Math.floor(Math.random() * safeSides) + 1);
   const subtotal = rolls.reduce((sum, roll) => sum + roll, 0);
   return {
@@ -5676,9 +5676,9 @@ async function performPublicGmRoll() {
     return;
   }
   const dice = Number(ui.publicDiceSides.value) || 20;
-  const count = Number(ui.publicDiceCount.value) || 1;
+  const count2 = Number(ui.publicDiceCount.value) || 1;
   const modifier2 = Number(ui.publicDiceModifier.value) || 0;
-  const result = rollDice(dice, modifier2, count);
+  const result = rollDice(dice, modifier2, count2);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   const isPublic = Boolean(ui.publicDicePrivate?.checked);

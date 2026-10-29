@@ -15,7 +15,7 @@ const browser=await chromium.launch(process.env.PLAYWRIGHT_CHANNEL?{channel:proc
 
 
 try{
- const page=await browser.newPage({viewport:{width:1000,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+server.address().port+'/');await page.locator('[data-od-action="add-item"]').waitFor({state:'attached'});await page.locator('summary').filter({hasText:/^Items/}).first().click();await page.locator('[data-od-action="add-item"]').click();await page.locator('dialog [name="kind"]').selectOption('implant');await page.locator('dialog [name="name"]').fill('Layout preview');
+ const page=await browser.newPage({viewport:{width:1000,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+server.address().port+'/');await page.locator('[data-od-action="add-item"]').waitFor({state:'attached'});await page.locator('summary').filter({hasText:/^Items/}).first().click();await page.locator('[data-od-action="add-item"]').click();await page.locator('dialog [name="kind"]').selectOption('prosthesis');await page.locator('dialog [name="name"]').fill('Layout preview');
  assert.equal(await page.locator('dialog .od-bonus-new-fields').isVisible(),false);await page.locator('dialog .od-new-bonus-skill>summary').click();assert.equal(await page.locator('dialog .od-bonus-new-fields').isVisible(),true);await page.locator('dialog [name="newBonusSkillName"]').fill('New skill');await page.locator('dialog [data-add-ability]').click();await page.locator('dialog [name="abilityName"]').fill('Implant ability');
  for(const width of [360,480,620,1000]){
   await page.setViewportSize({width,height:1100});

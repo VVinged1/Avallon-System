@@ -441,7 +441,7 @@ function equipmentFits(item, partName, part) {
   return slots.includes("any") || slots.includes(partName) || slots.includes(part?.slot);
 }
 function itemActive(item) {
-  return item.quantity > 0 && (item.kind === "implant" || !item.criticalMax || item.criticalDamage < item.criticalMax);
+  return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
 }
 function armorSummary(o) {
   const total = (o.inventory?.items || []).filter((i) => ["armor", "shield"].includes(i.kind) && i.equippedPart && itemActive(i)).reduce((sum, i) => sum + i.armor, 0);
@@ -481,8 +481,8 @@ function effectiveAvallon(base) {
   }
   for (const i of o.inventory?.items || []) {
     if (!itemActive(i)) continue;
-    if (i.kind === "resource" || ["armor", "shield", "implant"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "implant"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "implant" });
-    if (i.kind === "implant" && i.equippedPart) for (const a of i.abilities || []) {
+    if (i.kind === "resource" || ["armor", "shield", "prosthesis", "artifact"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "prosthesis"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "prosthesis" });
+    if (i.kind === "prosthesis" && i.equippedPart) for (const a of i.abilities || []) {
       if (a.kind && a.kind !== "skill") continue;
       const key = register("implant:" + i.id + ":" + a.id, a.name, a.level, "abilities", i.name, true);
       if (!direct.has(key)) {
@@ -544,8 +544,8 @@ function reconcileEquipment(tracker) {
   inv.baseArmor ?? (inv.baseArmor = {});
   inv.baseMax ?? (inv.baseMax = {});
   for (const [partName, part] of Object.entries(tracker.body)) {
-    const equipped = inv.items.filter((i) => ["armor", "shield", "implant"].includes(i.kind) && i.equippedPart === partName);
-    const implantHp = equipped.filter((i) => i.kind === "implant" && itemActive(i)).reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0);
+    const equipped = inv.items.filter((i) => ["armor", "shield", "prosthesis"].includes(i.kind) && i.equippedPart === partName);
+    const implantHp = equipped.filter((i) => i.kind === "prosthesis" && itemActive(i)).reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0);
     const armor = equipped.filter((i) => ["armor", "shield"].includes(i.kind) && i.quantity > 0);
     const pool = { max: armor.reduce((sum, i) => sum + (Number(i.criticalMax) || 0), 0), remaining: armor.reduce((sum, i) => sum + Math.max(0, (Number(i.criticalMax) || 0) - (Number(i.criticalDamage) || 0)), 0) };
     inv.armorHp ?? (inv.armorHp = {});
@@ -577,7 +577,7 @@ function reconcileEquipment(tracker) {
 function absorbEquipmentCritical(tracker, partName, critical) {
   let remaining = Math.max(0, Number(critical) || 0), absorbed = 0;
   const items = tracker.avallon.inventory?.items || [];
-  for (const i of items.filter((i2) => ["armor", "shield"].includes(i2.kind) && i2.equippedPart === partName && i2.criticalMax > 0 && itemActive(i2)).sort((a, b) => (a.kind === "implant") - (b.kind === "implant"))) {
+  for (const i of items.filter((i2) => ["armor", "shield"].includes(i2.kind) && i2.equippedPart === partName && i2.criticalMax > 0 && itemActive(i2)).sort((a, b) => (a.kind === "prosthesis") - (b.kind === "prosthesis"))) {
     const amount = Math.min(remaining, i.criticalMax - i.criticalDamage);
     i.criticalDamage += amount;
     remaining -= amount;
@@ -661,7 +661,7 @@ function normalizeAbilities(raw) {
   return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), skill: String(a.skill || "").trim().slice(0, 80), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 function manaStatus(o) {
-  const max = Math.max(0, effectiveAvallon(o).attributes.Magic || 0);
+  const max = Math.max(0, (o.baseAttributes ? o : effectiveAvallon(o)).attributes.Magic || 0);
   return { max, current: Math.max(0, max - (o.mana?.spent || 0)) };
 }
 function spendMana(o, cost) {
@@ -691,625 +691,6 @@ function activateAbility(tracker, id) {
     tracker.avallon.effects.push({ id: key, name: a.name, bonuses: normalizeBonuses(a.bonuses) });
   }
   return a;
-}
-
-// ui/descriptions.js
-var escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-var descriptionButton = (title, text2) => '<button type="button" class="cp-info" data-description-title="' + escape(title) + '" data-description-text="' + escape(text2 || "No description yet.") + '" aria-label="Description: ' + escape(title) + '" title="Show description">i</button>';
-function installDescriptions() {
-  document.addEventListener("click", (event) => {
-    const node = event.target.closest?.("[data-description-title]");
-    if (!node) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const dialog = document.createElement("dialog");
-    dialog.className = "od-dialog od-description-dialog";
-    const title = document.createElement("h2"), body = document.createElement("p"), close = document.createElement("button");
-    title.textContent = node.dataset.descriptionTitle;
-    body.textContent = node.dataset.descriptionText || "No description yet.";
-    close.textContent = "Close";
-    close.type = "button";
-    close.setAttribute("aria-label", "Close description");
-    close.dataset.descriptionClose = "";
-    const finish = () => {
-      dialog.close();
-      dialog.remove();
-    };
-    close.onclick = finish;
-    dialog.addEventListener("cancel", (event2) => {
-      event2.preventDefault();
-      finish();
-    });
-    dialog.append(title, body, close);
-    document.body.append(dialog);
-    dialog.showModal();
-  });
-}
-
-// itemGroups.js
-var stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable(value[k])])) : value;
-var itemNameKey = (item) => String(item.name || "").trim().toLocaleLowerCase();
-function groupNamedItems(rows2, getValue = (row) => row) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const row of rows2) {
-    const v = getValue(row), key = (v.kind || "") + ":" + itemNameKey(v);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  }
-  return [...groups.values()];
-}
-function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
-  const result = [], known = /* @__PURE__ */ new Map();
-  for (const item of items) {
-    if (item.equippedPart) {
-      result.push(item);
-      continue;
-    }
-    const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
-    if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
-    if (!["armor", "shield", "implant"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (item.kind !== "implant") delete definition.abilities;
-    else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
-    if (definition.bonuses) {
-      definition.bonuses = structuredClone(definition.bonuses);
-      for (const field of ["skills", "skillCategories"]) if (definition.bonuses[field]) definition.bonuses[field] = Object.entries(definition.bonuses[field]).reduce((result2, [key2, value]) => {
-        const label = String(skillLabels[key2] || key2).trim().toLocaleLowerCase();
-        result2[label] = field === "skills" ? (result2[label] || 0) + value : value;
-        return result2;
-      }, {});
-    }
-    const key = JSON.stringify(stable({ ...definition, name: itemNameKey(item) })), previous = known.get(key);
-    if (previous && previous.quantity + quantity <= 999999) {
-      if (id === preferredId) {
-        item.quantity += previous.quantity;
-        result[result.indexOf(previous)] = item;
-        known.set(key, item);
-      } else previous.quantity += quantity;
-    } else {
-      result.push(item);
-      known.set(key, item);
-    }
-  }
-  return result;
-}
-
-// implantAbilities.js
-function activeImplantAbilities(o) {
-  return (o.inventory?.items || []).filter((i) => i.kind === "implant" && i.equippedPart && i.quantity > 0).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
-}
-function implantAttacks(o) {
-  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, boundSkill: ability.skill, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0 }));
-}
-function resolveAbilitySkill(o, label) {
-  return Object.keys(o.skills).find((k) => k.toLocaleLowerCase() === String(label).trim().toLocaleLowerCase() || String(o.skillLabels[k] || k).toLocaleLowerCase() === String(label).trim().toLocaleLowerCase()) || "";
-}
-function activateImplantAbility(tracker, itemId, abilityId) {
-  var _a;
-  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId && r.ability.kind === "bonus");
-  if (!row) throw Error("Equipped implant ability is unavailable.");
-  const effect = { id: "implant-effect:" + itemId + ":" + abilityId, name: row.item.name + " \xB7 " + row.ability.name, sourceItemId: itemId, bonuses: normalizeBonuses(row.ability.bonuses) };
-  (_a = tracker.avallon).effects ?? (_a.effects = []);
-  if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
-  if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
-  tracker.avallon.effects.push(effect);
-  return effect;
-}
-
-// inventory.js
-var LIMIT = 2e3;
-var int = (v, max = 999999) => Math.min(max, Math.max(0, Math.floor(Number(v) || 0)));
-var text = (v, max = 120) => String(v ?? "").trim().slice(0, max);
-var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "implant"]);
-function newId() {
-  return globalThis.crypto.randomUUID();
-}
-function rows(raw, map) {
-  const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, LIMIT).filter((r) => r && typeof r === "object").map(map).filter((r) => r.id && !seen.has(r.id) && seen.add(r.id));
-}
-function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {}) {
-  const items = rows(raw?.items, (r, i) => ({
-    id: text(r.id || `legacy-item-${i}`),
-    name: text(r.name) || "Item",
-    kind: kinds.has(r.kind) ? r.kind : "item",
-    quantity: int(r.quantity ?? 1),
-    description: text(r.description, 2e3),
-    armor: int(r.armor, 999),
-    subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
-    healCritical: int(r.healCritical ?? 1, 999),
-    useSkill: text(r.useSkill, 80),
-    slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
-    slot: text(r.slot || "any", 40),
-    criticalMax: int(r.criticalMax, 999),
-    criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
-    playerRemovable: r.playerRemovable === true,
-    bonuses: normalizeBonuses(["resource", "implant"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-    abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), skill: text(a.skill, 80) } : {} })),
-    legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
-    equippedPart: text(r.equippedPart, 40),
-    previousArmor: int(r.previousArmor, 999)
-  }));
-  for (const item of [...items]) if (item.equippedPart && ["armor", "shield", "implant"].includes(item.kind) && item.quantity > 1) {
-    let id = item.id.slice(0, 90) + "-reserve", suffix = 1;
-    while (items.some((i) => i.id === id)) id = item.id.slice(0, 90) + "-reserve-" + suffix++;
-    items.push({ ...structuredClone(item), id, quantity: item.quantity - 1, equippedPart: "", previousArmor: 0, legacyEquipment: false });
-    item.quantity = 1;
-  }
-  items.splice(0, items.length, ...mergeInventoryStacks(items, preferredId, skillLabels));
-  const magazines = rows(raw?.magazines, (r, i) => ({
-    id: text(r.id || `legacy-magazine-${i}`),
-    name: text(r.name) || "Magazine",
-    description: text(r.description, 2e3),
-    capacity: int(r.capacity, 999),
-    loadedAmmoId: text(r.loadedAmmoId),
-    loaded: int(r.loaded, int(r.capacity, 999))
-  }));
-  const assigned = /* @__PURE__ */ new Set();
-  for (const [i, weapon] of weapons.entries()) {
-    if (weapon.acceptsMagazines === false) {
-      weapon.magazineId = "";
-      continue;
-    }
-    const requested = text(weapon.magazineId);
-    let id = requested || ((!Object.hasOwn(weapon, "magazineId") || weapon.loaded > 0) && weapon.capacity > 0 ? `legacy-mag-${weapon.id || i}` : "");
-    if (!id) {
-      weapon.magazineId = "";
-      weapon.loaded = 0;
-      weapon.loadedAmmoId = "";
-      continue;
-    }
-    if (assigned.has(id)) id = `recovered-mag-${weapon.id || i}-${i}`;
-    let mag = magazines.find((m) => m.id === id);
-    if (!mag) {
-      mag = { id, name: `${weapon.name} magazine`, description: "", capacity: weapon.capacity, loaded: weapon.loaded, loadedAmmoId: weapon.loadedAmmoId };
-      magazines.push(mag);
-    }
-    weapon.magazineId = id;
-    assigned.add(id);
-    Object.assign(mag, { capacity: weapon.capacity, loaded: weapon.loaded, loadedAmmoId: weapon.loadedAmmoId });
-  }
-  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 999)])) };
-}
-function magazineWeapon(avallon, id) {
-  return avallon.weapons.ranged.find((w) => w.magazineId === id);
-}
-function magazineCompatible(avallon, weapon, magazine) {
-  if (weapon.acceptsMagazines === false) return false;
-  if (!Array.isArray(weapon.acceptedMagazineIds)) return magazine.capacity === weapon.capacity && (!magazine.loaded || weapon.ammoIds.includes(magazine.loadedAmmoId));
-  return weapon.acceptedMagazineIds.some((id) => id === magazine.id || avallon.inventory.magazines.some((reference) => reference.id === id && reference.name === magazine.name && reference.capacity === magazine.capacity));
-}
-function swapMagazine(avallon, weaponIndex, magazineId) {
-  const weapon = avallon.weapons.ranged[weaponIndex];
-  if (!weapon) throw new Error("Weapon no longer exists.");
-  if (weapon.acceptsMagazines === false) throw new Error("This weapon has a built-in magazine.");
-  const current2 = avallon.inventory.magazines.find((m) => m.id === weapon.magazineId);
-  if (current2) Object.assign(current2, { capacity: weapon.capacity, loaded: weapon.loaded, loadedAmmoId: weapon.loadedAmmoId });
-  const next = magazineId ? avallon.inventory.magazines.find((m) => m.id === magazineId) : null;
-  if (magazineId && !next) throw new Error("Magazine no longer exists.");
-  if (next && magazineWeapon(avallon, next.id) && weapon.magazineId !== next.id) throw new Error("Magazine is already mounted.");
-  const selectedMagazines = Array.isArray(weapon.acceptedMagazineIds);
-  if (next && selectedMagazines && !magazineCompatible(avallon, weapon, next)) throw new Error("This magazine is incompatible with the weapon.");
-  if (next && !selectedMagazines && next.capacity !== weapon.capacity) throw new Error("Magazine capacity must match this weapon.");
-  if (next?.loaded && !selectedMagazines && !weapon.ammoIds.includes(next.loadedAmmoId)) throw new Error("Magazine ammunition is incompatible.");
-  if (selectedMagazines) {
-    weapon.capacity = next?.capacity || 0;
-    weapon.ammoIds = next?.loadedAmmoId ? [next.loadedAmmoId] : [];
-  }
-  weapon.magazineId = next?.id || "";
-  weapon.loaded = next?.loaded || 0;
-  weapon.loadedAmmoId = next?.loadedAmmoId || "";
-}
-function fillMagazine(avallon, id, ammoId) {
-  const mag = avallon.inventory.magazines.find((m) => m.id === id);
-  const ammo = avallon.ammunition.find((a) => a.id === ammoId);
-  if (!mag || !ammo) throw new Error("Choose a magazine and ammunition.");
-  if (magazineWeapon(avallon, id)) throw new Error("Detach the magazine before filling it, or use weapon reload.");
-  if (mag.loaded && mag.loadedAmmoId !== ammoId) throw new Error("Empty the magazine before changing ammunition.");
-  const count = Math.min(mag.capacity - mag.loaded, ammo.quantity);
-  if (count < 1) throw new Error("Magazine is full or reserve is empty.");
-  mag.loadedAmmoId = ammoId;
-  mag.loaded += count;
-  ammo.quantity -= count;
-}
-function setMagazineRounds(avallon, id, rounds, ammoId) {
-  const mag = avallon.inventory.magazines.find((m) => m.id === id);
-  if (!mag) throw new Error("Magazine no longer exists.");
-  if (!Number.isInteger(rounds) || rounds < 0 || rounds > mag.capacity) {
-    throw new Error(`Rounds must be a whole number from 0 to ${mag.capacity}.`);
-  }
-  const selectedAmmoId = String(ammoId ?? mag.loadedAmmoId ?? "");
-  const ammo = avallon.ammunition.find((a) => a.id === selectedAmmoId);
-  const weapon = magazineWeapon(avallon, id);
-  if ((rounds > 0 || selectedAmmoId) && !ammo) throw new Error("Choose a valid ammunition type.");
-  if (weapon && !Array.isArray(weapon.acceptedMagazineIds) && selectedAmmoId && !weapon.ammoIds.includes(selectedAmmoId)) {
-    throw new Error("This ammunition is incompatible with the mounted weapon.");
-  }
-  mag.loaded = rounds;
-  mag.loadedAmmoId = selectedAmmoId;
-  if (weapon) {
-    if (Array.isArray(weapon.acceptedMagazineIds)) weapon.ammoIds = selectedAmmoId ? [selectedAmmoId] : [];
-    weapon.loaded = rounds;
-    weapon.loadedAmmoId = selectedAmmoId;
-  }
-}
-function emptyMagazine(avallon, id) {
-  const mag = avallon.inventory.magazines.find((m) => m.id === id);
-  if (!mag) throw new Error("Magazine no longer exists.");
-  if (magazineWeapon(avallon, id)) throw new Error("Detach the magazine first.");
-  const ammo = avallon.ammunition.find((a) => a.id === mag.loadedAmmoId);
-  if (mag.loaded && !ammo) throw new Error("The loaded ammunition is missing.");
-  if (ammo && ammo.quantity + mag.loaded > 999999) throw new Error("Ammo reserve is full.");
-  if (ammo) ammo.quantity += mag.loaded;
-  mag.loaded = 0;
-  mag.loadedAmmoId = "";
-}
-function equipItem(tracker, id, partName, gm = true) {
-  var _a;
-  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
-  if (!item || !["armor", "shield", "implant"].includes(item.kind)) throw new Error("Choose equipment.");
-  if (item.kind === "implant" && !gm && !item.playerRemovable) throw new Error("Only the GM can equip this implant.");
-  if (item.quantity < 1 || item.equippedPart) throw new Error("Item is unavailable or already equipped.");
-  const part = tracker.body[partName];
-  if (!part) throw new Error("Body part no longer exists.");
-  if (!equipmentFits(item, partName, part)) throw new Error("This item does not fit the selected slot.");
-  if (item.kind !== "implant" && tracker.avallon.inventory.items.some((i) => ["armor", "shield"].includes(i.kind) && i.equippedPart === partName)) throw new Error("Armor is already equipped on this part.");
-  if (item.quantity > 1) {
-    if (tracker.avallon.inventory.items.length >= 1e3) throw new Error("Inventory is full.");
-    tracker.avallon.inventory.items.push({ ...structuredClone(item), id: newId(), quantity: item.quantity - 1, equippedPart: "", previousArmor: 0, legacyEquipment: false });
-    item.quantity = 1;
-  }
-  (_a = tracker.avallon.inventory).baseArmor ?? (_a.baseArmor = {});
-  if (!Object.hasOwn(tracker.avallon.inventory.baseArmor, partName)) tracker.avallon.inventory.baseArmor[partName] = part.armor;
-  item.equippedPart = partName;
-  item.legacyEquipment = false;
-  reconcileEquipment(tracker);
-}
-function unequipItem(tracker, id, gm = true) {
-  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
-  if (!item) throw new Error("Item no longer exists.");
-  if (item.kind === "implant" && !gm && !item.playerRemovable) throw new Error("Only the GM can remove this implant.");
-  const part = tracker.body[item.equippedPart], inv = tracker.avallon.inventory;
-  if (part && Object.hasOwn(inv.baseArmor || {}, item.equippedPart)) {
-    const expected = inv.baseArmor[item.equippedPart] + inv.items.filter((i) => i.equippedPart === item.equippedPart && ["armor", "shield", "implant"].includes(i.kind) && i.quantity > 0 && (i.kind === "implant" || !i.criticalMax || i.criticalDamage < i.criticalMax)).reduce((sum, i) => sum + i.armor, 0);
-    if (part.armor !== expected) inv.baseArmor[item.equippedPart] = part.armor;
-  }
-  item.equippedPart = "";
-  tracker.avallon.effects = (tracker.avallon.effects || []).filter((e) => e.sourceItemId !== id);
-  reconcileEquipment(tracker);
-}
-function consumeItem(tracker, id) {
-  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
-  if (!item || !["consumable", "medical", "resource"].includes(item.kind) || item.quantity < 1) throw new Error("No usable item available.");
-  item.quantity -= 1;
-}
-function findInventoryEntry(tracker, type, id) {
-  const o = tracker.avallon;
-  if (type === "ammo") return o.ammunition.find((a) => a.id === id);
-  if (type === "magazine") return o.inventory.magazines.find((m) => m.id === id);
-  if (type?.startsWith("weapon-")) return o.weapons[type.slice(7)]?.find((w, index) => (w.id || String(index)) === id);
-  return o.inventory.items.find((i) => i.id === id);
-}
-function deleteInventoryEntry(tracker, type, id) {
-  const o = tracker.avallon;
-  if (type === "ammo") {
-    if (o.inventory.magazines.some((m) => m.loadedAmmoId === id && m.loaded) || o.weapons.ranged.some((w) => w.acceptsMagazines === false && w.loadedAmmoId === id && w.loaded)) throw new Error("Empty all magazines using this ammo first.");
-    o.ammunition = o.ammunition.filter((a) => a.id !== id);
-    for (const w of o.weapons.ranged) w.ammoIds = w.ammoIds.filter((a) => a !== id);
-    return;
-  }
-  if (type === "magazine") {
-    const removed = o.inventory.magazines.find((m) => m.id === id), replacement = removed && o.inventory.magazines.find((m) => m.id !== id && m.name === removed.name && m.capacity === removed.capacity);
-    const index = o.weapons.ranged.findIndex((w) => w.magazineId === id);
-    if (index >= 0) swapMagazine(o, index, "");
-    emptyMagazine(o, id);
-    o.inventory.magazines = o.inventory.magazines.filter((m) => m.id !== id);
-    for (const w of o.weapons.ranged) if (w.acceptedMagazineIds) w.acceptedMagazineIds = [...new Set(w.acceptedMagazineIds.flatMap((m) => m === id ? replacement ? [replacement.id] : [] : [m]))];
-    return;
-  }
-  if (type?.startsWith("weapon-")) {
-    const kind = type.slice(7), index = o.weapons[kind].findIndex((w, j) => (w.id || String(j)) === id);
-    if (index < 0) throw new Error("Weapon no longer exists.");
-    if (kind === "ranged") {
-      const w = o.weapons.ranged[index];
-      if (w.acceptsMagazines === false && w.loaded) {
-        const a = o.ammunition.find((a2) => a2.id === w.loadedAmmoId);
-        if (!a || a.quantity + w.loaded > 999999) throw new Error("Cannot return loaded ammunition to reserve.");
-        a.quantity += w.loaded;
-      } else if (w.magazineId) swapMagazine(o, index, "");
-    }
-    o.weapons[kind].splice(index, 1);
-    return;
-  }
-  const item = o.inventory.items.find((i) => i.id === id);
-  if (!item) throw new Error("Item no longer exists.");
-  if (item.equippedPart) unequipItem(tracker, id, true);
-  o.inventory.items = o.inventory.items.filter((i) => i.id !== id);
-}
-function saveInventoryEntry(tracker, origin, values, id) {
-  const o = tracker.avallon, existing = origin ? findInventoryEntry(tracker, origin.type, origin.id) : null;
-  if (origin && !existing) throw new Error("Item no longer exists.");
-  const kind = values.kind, weaponKind = values.weaponKind === "ranged" ? "ranged" : "melee";
-  const dest = kind === "weapon" ? "weapon-" + weaponKind : kind === "ammo" ? "ammo" : kind === "magazine" ? "magazine" : "item";
-  if (origin && origin.type !== dest) deleteInventoryEntry(tracker, origin.type, origin.id);
-  const same = origin?.type === dest ? existing : null;
-  if (kind === "ammo") {
-    const row2 = { id, name: values.name, description: text(values.description, 2e3), damage: Number(values.damage) || 0, penetration: Number(values.penetration) || 0, quantity: Number(values.quantity) || 0 };
-    if (same) Object.assign(same, row2);
-    else {
-      if (o.ammunition.length >= 200) throw new Error("Too many ammo types.");
-      o.ammunition.push(row2);
-    }
-    return;
-  }
-  if (kind === "magazine") {
-    const capacity = Number(values.capacity), loaded = Number(values.loaded);
-    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 999 || !Number.isInteger(loaded) || loaded < 0 || loaded > capacity) throw new Error("Invalid magazine capacity or rounds.");
-    const mounted = same && magazineWeapon(o, same.id);
-    if (mounted && capacity !== mounted.capacity) throw new Error("Detach the magazine before changing its capacity.");
-    if (same) {
-      same.capacity = capacity;
-      same.name = values.name;
-      same.description = text(values.description, 2e3);
-      setMagazineRounds(o, same.id, loaded, values.loadedAmmoId);
-    } else {
-      const quantity = Number(values.quantity ?? 1);
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1e3 || o.inventory.magazines.length + quantity > 1e3) throw new Error("Invalid magazine quantity or inventory is full.");
-      for (let i = 0; i < quantity; i++) {
-        const magazineId = i ? id + "-copy-" + i : id;
-        o.inventory.magazines.push({ id: magazineId, name: values.name, description: text(values.description, 2e3), capacity, loaded: 0, loadedAmmoId: "" });
-        setMagazineRounds(o, magazineId, loaded, values.loadedAmmoId);
-      }
-    }
-    return;
-  }
-  if (kind === "weapon") {
-    if ([...o.weapons.melee, ...o.weapons.ranged].some((w) => w !== same && w.name === values.name)) throw new Error("A weapon with this name already exists.");
-    const row2 = { id, name: values.name, description: text(values.description, 2e3), accuracy: Number(values.accuracy) || 0, damage: Number(values.damage) || 0 };
-    if (weaponKind === "ranged") {
-      row2.weaponCategory = normalizeWeaponCategory(values.weaponCategory);
-      row2.rangeReduction = normalizeRangeReduction(values.rangeReduction);
-      const acceptsMagazines = values.acceptsMagazines !== false;
-      if (same && same.acceptsMagazines !== false !== acceptsMagazines && same.loaded > 0) throw new Error("Empty or detach the current magazine before changing magazine type.");
-      if (acceptsMagazines) {
-        const acceptedMagazineIds = [...new Set(values.acceptedMagazineIds || [])];
-        if (acceptedMagazineIds.some((id2) => !o.inventory.magazines.some((m) => m.id === id2))) throw new Error("Selected magazine no longer exists.");
-        if (same?.magazineId && !magazineCompatible(o, { ...same, acceptedMagazineIds }, o.inventory.magazines.find((m) => m.id === same.magazineId))) throw new Error("Detach the current magazine before removing its compatibility.");
-        Object.assign(row2, { acceptsMagazines: true, acceptedMagazineIds, capacity: same?.magazineId ? same.capacity : 0, ammoIds: same?.magazineId ? same.ammoIds || [] : [], loaded: same?.loaded || 0, loadedAmmoId: same?.loadedAmmoId || "", magazineId: same?.magazineId || "" });
-      } else {
-        const capacity = Number(values.capacity), ammoIds = values.ammoIds || [], loaded = Number(values.loaded ?? same?.loaded ?? 0), loadedAmmoId = String(values.loadedAmmoId ?? same?.loadedAmmoId ?? "");
-        if (!Number.isInteger(capacity) || capacity < 1 || capacity > 999 || !Number.isInteger(loaded) || loaded < 0 || loaded > capacity) throw new Error("Invalid built-in magazine capacity or rounds.");
-        if (loaded && (!ammoIds.includes(loadedAmmoId) || !o.ammunition.some((a) => a.id === loadedAmmoId))) throw new Error("Choose compatible ammunition for loaded rounds.");
-        Object.assign(row2, { acceptsMagazines: false, acceptedMagazineIds: [], capacity, ammoIds, loaded, loadedAmmoId: loaded ? loadedAmmoId : "", magazineId: "" });
-      }
-    }
-    if (same) Object.assign(same, row2);
-    else {
-      if (o.weapons[weaponKind].length >= 20) throw new Error("Weapon limit is 20 per type.");
-      o.weapons[weaponKind].push(row2);
-    }
-    return;
-  }
-  if (same?.equippedPart && !["armor", "shield", "implant"].includes(kind)) unequipItem(tracker, id, true);
-  const row = { ...values, id, quantity: Number(values.quantity) || 0, armor: Number(values.armor) || 0, healCritical: Number(values.healCritical) || 0, criticalMax: Number(values.criticalMax) || 0, criticalDamage: Number(values.criticalDamage) || 0, playerRemovable: values.playerRemovable === true, legacyEquipment: false, equippedPart: same?.equippedPart || "", previousArmor: same?.previousArmor || 0 };
-  if (!["armor", "shield", "implant"].includes(kind)) {
-    row.armor = 0;
-    row.criticalMax = 0;
-    row.criticalDamage = 0;
-  }
-  if (kind === "implant") row.criticalDamage = 0;
-  if (row.equippedPart && row.quantity > 1 && o.inventory.items.length >= 1e3) throw new Error("Inventory is full; cannot separate equipped and spare items.");
-  if (row.criticalDamage > row.criticalMax) throw new Error("Critical damage cannot exceed durability.");
-  if (same?.equippedPart && !equipmentFits(row, same.equippedPart, tracker.body[same.equippedPart])) throw new Error("Unequip before changing the equipment slot.");
-  if (same) Object.assign(same, row);
-  else {
-    if (o.inventory.items.length >= 1e3) throw new Error("Inventory limit is 1000 items.");
-    o.inventory.items.push(row);
-  }
-  o.inventory = normalizeInventory(o.inventory, o.weapons.ranged, id, o.skillLabels);
-  reconcileEquipment(tracker);
-}
-
-// ui/characterView.js
-var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
-function attributeCards(o, fields, editable) {
-  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
-    const delta = o.modifiers?.attributes?.[k] || 0;
-    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
-  }).join("")}</div></div>`;
-}
-function skillCards(o, groups, editable) {
-  const passives = Object.entries(ARMOR_TRAINING).filter(([k]) => Object.hasOwn(o.skills, k) && (editable || o.skills[k] === 1));
-  const skillRow = ([k, value]) => {
-    const name = o.skillLabels[k] || k, perks = o.skillPerks[k] || [], mod = o.modifiers?.skills?.[k] || 0;
-    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
-    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc(k) + '" aria-label="Roll ' + esc(name) + '"><span><b>' + esc(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc(k) + '" aria-label="Edit ' + esc(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
-  };
-  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + "</div>" + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
-}
-function effectChips(o, gm) {
-  const rows2 = o.effectRows || [];
-  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc(bonusText(e.bonuses))}"><b>${esc(e.name)}</b> ${esc(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc(e.id)}" aria-label="Remove ${esc(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
-}
-function inventoryView(tracker, gm) {
-  const o = tracker.avallon, inv = o.inventory;
-  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Remove item">\xD7</button>` : "";
-  const renderItem = (i) => {
-    const equipment = ["armor", "shield", "implant"].includes(i.kind), broken = i.kind !== "implant" && i.criticalMax > 0 && i.criticalDamage >= i.criticalMax;
-    const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
-    let controls = "";
-    if (equipment) {
-      const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
-      if (!gm && i.kind === "implant" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
-      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc(i.id) + '">Unequip</button>';
-      else {
-        const options = Object.entries(tracker.body).filter(([key, p]) => (gm || !p.hidden) && equipmentFits(i, key, p) && (i.kind === "implant" || !inv.items.some((other) => ["armor", "shield"].includes(other.kind) && other.equippedPart === key)));
-        controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
-      }
-    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
-    return '<article class="cp-card"><div class="cp-row"><b>' + esc(i.name) + '</b><span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "implant" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
-  };
-  const abilities = activeImplantAbilities(o).map(({ item, ability, key }) => '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + " \xB7 " + esc(ability.skill) + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '">Prepare attack</button>' : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + ((o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id) ? "disabled" : "") + ">Activate bonuses</button>") + "</article>").join("");
-  const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
-  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
-  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
-  const mags = inv.magazines.map((m) => {
-    const w = o.weapons.ranged.find((w2) => w2.magazineId === m.id), a = o.ammunition.find((a2) => a2.id === m.loadedAmmoId);
-    return `<article class="cp-card"><div class="cp-row"><b>${esc(m.name)}</b><span class="cp-pill">Magazine ${m.loaded}/${m.capacity}</span><span class="cp-muted">${esc(a?.name || "Empty")}${w ? " \xB7 " + esc(w.name) : ""}</span>${gm ? `<button type="button" class="secondary" data-od-action="set-mag-rounds" data-id="${esc(m.id)}">GM \xB7 Set rounds\u2026</button>` : ""}${descriptionButton(m.name, m.description)}${edit("magazine", m.id)}</div>${gm && !w ? `<div class="cp-row"><select aria-label="Magazine ammunition" data-mag-ammo="${esc(m.id)}">${o.ammunition.map((a2) => `<option value="${esc(a2.id)}">${esc(a2.name)} (${a2.quantity})</option>`).join("")}</select><button type="button" data-od-action="fill-mag" data-id="${esc(m.id)}">Fill</button><button type="button" data-od-action="empty-mag" data-id="${esc(m.id)}">Empty to reserve</button></div>` : ""}</article>`;
-  }).join("");
-  const weapons = ["melee", "ranged"].flatMap((kind) => o.weapons[kind].map((w, index) => {
-    let controls = "";
-    if (gm && kind === "ranged") {
-      if (w.acceptsMagazines !== false) {
-        const compatible = inv.magazines.filter((m) => m.id === w.magazineId || !o.weapons.ranged.some((x) => x.magazineId === m.id) && magazineCompatible(o, w, m));
-        controls = '<div class="cp-row"><label>Magazine<select data-weapon-mag="' + index + '"><option value="">Detached</option>' + compatible.map((m) => '<option value="' + esc(m.id) + '" ' + (m.id === w.magazineId ? "selected" : "") + ">" + esc(m.name) + " \xB7 " + m.loaded + "/" + m.capacity + "</option>").join("") + '</select></label><button type="button" data-od-action="mount-mag" data-index="' + index + '">Apply magazine</button></div>';
-      } else controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload built-in magazine</button></div>';
-    }
-    return '<article class="cp-card"><div class="cp-row"><b>' + esc(w.name) + '</b><span class="cp-pill">' + esc(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 " + (w.acceptsMagazines === false ? "Built-in " : "Magazine ") + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
-  }));
-  const group = (label, html) => html ? `<div class="cp-section-title">${label}</div><div class="cp-list">${html}</div>` : "";
-  return `<div class="cp-screen">${gm ? '<div class="cp-row"><button type="button" data-od-action="add-item">+ Item</button><button type="button" data-od-action="open-item-pool">Campaign item pool</button></div>' : ""}${group("Implant abilities", abilities)}${group("Equipped", equippedItems)}${group("Items", items)}${group("Weapons", weapons.join(""))}${group("Ammunition", ammo)}${group("Magazines", mags)}${!equippedItems && !items && !ammo && !mags && !weapons.length ? '<p class="cp-muted">Inventory is empty.</p>' : ""}</div>`;
-}
-function templatesView(library, gm) {
-  if (!gm) return "";
-  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
-}
-
-// ui/magicTools.js
-function magicView(tracker, effective, gm) {
-  const o = tracker.avallon, pool = manaStatus(o);
-  return '<section class="cp-screen av-magic"><div class="cp-row"><span class="cp-section-title">Magic & abilities</span><span class="cp-pill" data-mana-current>' + pool.current + " / " + pool.max + " mana</span>" + (gm ? '<button type="button" data-magic-action="mana" title="Set current mana">Edit mana</button><button type="button" data-magic-action="add" title="Add ability">+ Ability</button>' : "") + '</div><div class="cp-list">' + (o.abilities || []).map((a) => '<article class="cp-card cp-row"><b>' + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 " + a.cost + " mana</span>" + descriptionButton(a.name, a.description) + '<button type="button" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" title="' + (a.kind === "attack" ? "Prepare ability attack" : "Use ability") + '" ' + (pool.current < a.cost ? "disabled" : "") + ">" + (a.kind === "attack" ? "Prepare attack" : "Use") + "</button>" + (gm ? '<button type="button" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">Edit ability</button>' : "") + "</article>").join("") + "</div></section>";
-}
-function abilityEditor(existing = {}, skills = []) {
-  const dialog = document.createElement("dialog");
-  dialog.className = "od-dialog od-item-editor";
-  const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
-  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Type<select name="kind"><option value="utility">Utility</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '<label>Attack skill<select name="skill"><option value="">Choose skill</option>' + skills.map(([key, label]) => '<option value="' + esc(label) + '" ' + ([key, label].includes(existing.skill) ? "selected" : "") + ">" + esc(label) + "</option>").join("") + '</select></label></div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
-  const form = dialog.querySelector("form");
-  form.elements.kind.value = existing.kind || "utility";
-  const toggle = () => {
-    form.querySelector("[data-attack-fields]").hidden = form.elements.kind.value !== "attack";
-    form.querySelector("[data-bonus-fields]").hidden = form.elements.kind.value !== "bonus";
-    form.elements.skill.required = form.elements.kind.value === "attack";
-  };
-  form.elements.kind.onchange = toggle;
-  toggle();
-  document.body.append(dialog);
-  dialog.showModal();
-  return new Promise((resolve) => {
-    const finish = (value) => {
-      dialog.close();
-      dialog.remove();
-      resolve(value);
-    };
-    form.querySelector("[data-cancel]").onclick = () => finish(null);
-    form.querySelector("[data-delete]")?.addEventListener("click", () => finish({ delete: true }));
-    dialog.addEventListener("cancel", (e) => {
-      e.preventDefault();
-      finish(null);
-    });
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(form)), bonuses = { attributes: {}, skills: {} };
-      for (const [key, value] of Object.entries(data)) {
-        if (key.startsWith("attr:") && Number(value)) bonuses.attributes[key.slice(5)] = Number(value);
-        if (key.startsWith("skill:") && Number(value)) bonuses.skills[key.slice(6)] = Number(value);
-      }
-      if (!data.name.trim()) {
-        form.elements.name.focus();
-        return;
-      }
-      finish(normalizeAbilities([{ ...data, id: existing.id || crypto.randomUUID(), bonuses }])[0]);
-    };
-  });
-}
-function installMagicTools(host) {
-  let busy = false;
-  document.addEventListener("click", (event) => {
-    const node = event.target.closest?.("[data-magic-action]");
-    if (!node || busy || node.disabled) return;
-    busy = true;
-    (async () => {
-      const token = host.getToken(), id = token?.id;
-      if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
-      const action = node.dataset.magicAction, gm = host.getRole() === "GM", t = host.tracker(token), abilityId = node.dataset.id;
-      if (["add", "edit", "mana"].includes(action) && !gm) throw Error("Only the GM can edit abilities or mana.");
-      if (action === "prepare") {
-        host.prepare(id, "magic:" + abilityId);
-        host.status("Ability selected in Attack.", "success");
-        return;
-      }
-      if (action === "add" || action === "edit") {
-        const existing = t.avallon.abilities.find((a) => a.id === abilityId);
-        if (action === "edit" && !existing) throw Error("Ability no longer exists.");
-        const o = host.effective(token), value = await abilityEditor(existing, Object.keys(o.skills).map((key) => [key, o.skillLabels[key] || key]));
-        if (!value) return;
-        await host.update(id, (current2) => {
-          if (host.getRole() !== "GM") throw Error("Only the GM can edit abilities.");
-          const next = structuredClone(current2);
-          next.avallon.abilities = next.avallon.abilities.filter((a) => a.id !== abilityId);
-          next.avallon.effects = next.avallon.effects.filter((e) => e.id !== "ability-effect:" + abilityId);
-          if (!value.delete) {
-            if (next.avallon.abilities.length >= 100) throw Error("Ability limit is 100.");
-            next.avallon.abilities.push(value);
-          }
-          return next;
-        });
-      } else if (action === "mana") {
-        const dialog = document.createElement("dialog");
-        dialog.className = "od-dialog";
-        const pool = manaStatus(t.avallon);
-        dialog.innerHTML = "<form><h2>Current mana</h2><label>Mana \xB7 maximum " + pool.max + '<input name="current" type="number" min="0" max="' + pool.max + '" step="0.5" value="' + pool.current + '"></label><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></form>';
-        document.body.append(dialog);
-        dialog.showModal();
-        const value = await new Promise((resolve) => {
-          const finish = (v) => {
-            dialog.close();
-            dialog.remove();
-            resolve(v);
-          };
-          dialog.querySelector("[data-cancel]").onclick = () => finish(null);
-          dialog.addEventListener("cancel", (e) => {
-            e.preventDefault();
-            finish(null);
-          });
-          dialog.querySelector("form").onsubmit = (e) => {
-            e.preventDefault();
-            finish(Number(e.target.elements.current.value));
-          };
-        });
-        if (value === null) return;
-        await host.update(id, (current2) => {
-          if (host.getRole() !== "GM") throw Error("Only GM can set mana.");
-          const next = structuredClone(current2);
-          setMana(next.avallon, value);
-          return next;
-        });
-      } else if (action === "use") {
-        let used;
-        await host.update(id, (current2) => {
-          if (!host.canControl(token)) throw Error("Character unavailable.");
-          const next = structuredClone(current2);
-          used = activateAbility(next, abilityId);
-          next.lastRoll = { summary: used.name + " \xB7 used " + used.cost + " mana", outcome: "ability-use", actorName: token.name, eventId: 0, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
-          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
-          return next;
-        });
-        try {
-          await host.log(token.name + " uses " + used.name, used.cost + " mana spent", "success");
-        } catch {
-          host.status("Ability saved and mana spent; public log unavailable.", "error");
-          host.render();
-          return;
-        }
-      }
-      host.render();
-      host.status("Saved.", "success");
-    })().catch((e) => host.status(e.message, "error")).finally(() => {
-      busy = false;
-      host.render();
-    });
-  });
 }
 
 // itemUse.js
@@ -1349,342 +730,302 @@ function itemUseSummary(result) {
   return result.itemName + " \xB7 " + (result.success ? "effect applied" : "no effect") + " \xB7 1 item spent" + (stages.length ? " \xB7 " + stages.join(" \u2192 ") : "");
 }
 
-// fieldDrafts.js
-function createFieldDrafts() {
-  const tokens = /* @__PURE__ */ new Map();
-  let revision = 0;
-  return {
-    set(tokenId, key, value) {
-      if (!tokens.has(tokenId)) tokens.set(tokenId, /* @__PURE__ */ new Map());
-      const draft2 = { value, revision: ++revision };
-      tokens.get(tokenId).set(key, draft2);
-      return draft2;
-    },
-    get(tokenId, key) {
-      return tokens.get(tokenId)?.get(key);
-    },
-    finish(tokenId, key, draft2) {
-      const rows2 = tokens.get(tokenId);
-      if (rows2?.get(key) !== draft2) return;
-      rows2.delete(key);
-      if (!rows2.size) tokens.delete(tokenId);
-    },
-    clear(tokenId) {
-      tokens.delete(tokenId);
-    }
-  };
-}
-function createTokenWriteQueue() {
-  const pending = /* @__PURE__ */ new Map();
-  return (tokenId, write) => {
-    const task = (pending.get(tokenId) || Promise.resolve()).catch(() => {
-    }).then(write);
-    pending.set(tokenId, task);
-    const cleanup = () => {
-      if (pending.get(tokenId) === task) pending.delete(tokenId);
+// ui/descriptions.js
+var escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var descriptionButton = (title, text2) => '<button type="button" class="cp-info" data-description-title="' + escape(title) + '" data-description-text="' + escape(text2 || "No description yet.") + '" aria-label="Description: ' + escape(title) + '" title="Show description">i</button>';
+function installDescriptions() {
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-description-title]");
+    if (!node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dialog = document.createElement("dialog");
+    dialog.className = "od-dialog od-description-dialog";
+    const title = document.createElement("h2"), body = document.createElement("p"), close = document.createElement("button");
+    title.textContent = node.dataset.descriptionTitle;
+    body.textContent = node.dataset.descriptionText || "No description yet.";
+    close.textContent = "Close";
+    close.type = "button";
+    close.setAttribute("aria-label", "Close description");
+    close.dataset.descriptionClose = "";
+    const finish = () => {
+      dialog.close();
+      dialog.remove();
     };
-    task.then(cleanup, cleanup);
-    return task;
-  };
-}
-
-// targetDistance.js
-function distanceLabel(cells, scale) {
-  if (!Number.isFinite(cells) || cells < 0) throw new Error("Distance is unavailable.");
-  const digits = Math.max(0, Math.min(5, Number(scale?.parsed?.digits) || 0)), multiplier = Number(scale?.parsed?.multiplier) || 1;
-  const format = (n2, d, min = 0) => Number(n2.toFixed(d)).toLocaleString("en-US", { minimumFractionDigits: min, maximumFractionDigits: d, useGrouping: false });
-  const unit = String(scale?.parsed?.unit || "");
-  return format(cells, 2) + " cells" + (unit ? " \xB7 " + format(cells * multiplier, digits, digits) + unit : "");
-}
-function createTargetDistance({ OBR: OBR2, buildRuler: buildRuler2, onRead, context = "main" }) {
-  const key = "com.avallon.system/target-distance", id = crypto.randomUUID();
-  let request = 0, generation = 0, timer = null, latest2 = null, added = false, chain = Promise.resolve(), scalePromise = null;
-  const cache = /* @__PURE__ */ new Map();
-  const initialize = OBR2.scene.local.getItems().then((items) => {
-    const ids = items.filter((i) => i.metadata?.[key] === context).map((i) => i.id);
-    if (ids.length) return OBR2.scene.local.deleteItems(ids);
-  }).catch(() => {
-  });
-  const center = async (target) => target.id ? (await OBR2.scene.items.getItemBounds([target.id])).center : target;
-  async function read(source, target) {
-    const cacheKey = JSON.stringify([source.id, source.position, source.scale, source.rotation, source.grid, source.image?.width, source.image?.height, target.id, target.position || target, target.scale, target.rotation, target.grid, target.image?.width, target.image?.height]);
-    if (!cache.has(cacheKey)) {
-      if (cache.size >= 32) cache.clear();
-      const promise = (async () => {
-        const [from, to, scale] = await Promise.all([center(source), center(target), scalePromise ?? (scalePromise = OBR2.scene.grid.getScale())]);
-        const cells = await OBR2.scene.grid.getDistance(from, to);
-        return { sourceId: source.id, targetId: target.id || "", from, to, cells, meters: distanceMeters(cells, scale), label: distanceLabel(cells, scale) };
-      })();
-      cache.set(cacheKey, promise);
-      promise.catch(() => {
-        if (cache.get(cacheKey) === promise) cache.delete(cacheKey);
-      });
-    }
-    return cache.get(cacheKey);
-  }
-  const publish = async (source, target, preview, epoch) => {
-    const current2 = ++request;
-    try {
-      const reading = await read(source, target);
-      if (epoch !== generation || current2 !== request) return preview ? null : reading;
-      onRead(reading);
-      if (preview) {
-        chain = chain.catch(() => {
-        }).then(async () => {
-          await initialize;
-          if (epoch !== generation || current2 !== request) return;
-          if (!added) {
-            const ruler = buildRuler2().id(id).name("Avallon target distance").startPosition(reading.from).endPosition(reading.to).measurement(reading.label).variant("DASHED").layer("RULER").locked(true).disableHit(true).metadata({ [key]: context }).build();
-            await OBR2.scene.local.addItems([ruler]);
-            added = true;
-          } else await OBR2.scene.local.updateItems([id], (items) => {
-            if (epoch === generation && current2 === request && items[0]) {
-              items[0].startPosition = reading.from;
-              items[0].endPosition = reading.to;
-              items[0].measurement = reading.label;
-            }
-          }, true);
-        });
-        await chain;
-      }
-      return reading;
-    } catch {
-      if (epoch === generation && current2 === request) onRead(null);
-      return null;
-    }
-  };
-  return {
-    preview(source, target) {
-      latest2 = { source, target };
-      if (timer) return;
-      const epoch = generation;
-      timer = setTimeout(() => {
-        timer = null;
-        const next = latest2;
-        if (next) void publish(next.source, next.target, true, epoch);
-      }, 80);
-    },
-    measure(source, target) {
-      return publish(source, target, false, generation);
-    },
-    invalidate() {
-      generation++;
-      request++;
-      cache.clear();
-      scalePromise = null;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      if (latest2) this.preview(latest2.source, latest2.target);
-    },
-    async clear() {
-      generation++;
-      request++;
-      latest2 = null;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      chain = chain.catch(() => {
-      }).then(async () => {
-        await initialize;
-        if (added) {
-          await OBR2.scene.local.deleteItems([id]);
-          added = false;
-        }
-      });
-      await chain.catch(() => {
-      });
-    }
-  };
-}
-
-// ui/combatLayout.js
-function arrangeCombatPanels(root = document) {
-  for (const panel of root.querySelectorAll("[data-combat-layout]:not([data-combat-arranged])")) {
-    panel.dataset.combatArranged = "true";
-    const kind = panel.dataset.combatLayout;
-    const grid = document.createElement("div");
-    grid.className = "od-combat-grid";
-    const cards = ["Weapon & skill", kind === "manual" ? "Manual defense" : "Target", "Action"].map((title) => {
-      const card = document.createElement("section");
-      card.className = "od-combat-card";
-      const heading = document.createElement("div");
-      heading.className = "od-combat-title";
-      heading.textContent = title;
-      card.append(heading);
-      grid.append(card);
-      return card;
+    close.onclick = finish;
+    dialog.addEventListener("cancel", (event2) => {
+      event2.preventDefault();
+      finish();
     });
-    for (const field of [...panel.querySelectorAll("label.field-stack")]) {
-      const control = field.querySelector("[data-attack-field],[data-manual-attack-field],input,select,button,[id],.combat-value");
-      const key = control?.dataset.attackField || control?.dataset.manualAttackField || control?.id || control?.dataset.action || "";
-      const isWeapon = ["skill", "weaponName", "weaponDamage", "ammoId", "rounds", "attackSourceName", "attackSkill", "weaponAccuracy"].includes(key) || field.querySelector("[data-weapon-accuracy-display]");
-      const isTarget = ["distanceMeters", "targetPart", "targetName", "targetTokenId", "pick-attack-target", "pickTargetBtn", "clearTargetBtn", "manualArmor", "manualParry"].includes(key) || field.querySelector(".combat-value:not([data-weapon-accuracy-display])");
-      cards[isWeapon ? 0 : isTarget ? 1 : 2].append(field);
+    dialog.append(title, body, close);
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
+// artifactRules.js
+var count = (v, max = 999) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
+function normalizeArtifact(raw = {}) {
+  const chargeMax = count(raw.chargeMax);
+  return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
+}
+function useArtifact(tracker, id, partName = "") {
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact" && i.quantity > 0);
+  if (!item || !item.equippedPart) throw Error("Equip the artifact before using it.");
+  if (item.artifactEffect === "property") throw Error("This artifact grants a passive property.");
+  if (item.charges < item.chargeCost) throw Error("Not enough artifact charges.");
+  const effectId = "artifact-effect:" + id;
+  if (item.artifactEffect === "mana") {
+    const pool = manaStatus(tracker.avallon);
+    if (!item.effectAmount || pool.current >= pool.max) throw Error("No mana to restore.");
+    setMana(tracker.avallon, Math.min(pool.max, pool.current + item.effectAmount));
+  } else if (item.artifactEffect === "heal") {
+    useItemOnTracker(tracker, { subtype: "medkit", healCritical: Math.floor(item.effectAmount) }, partName, effectId);
+  } else {
+    if (tracker.avallon.effects.some((e) => e.id === effectId)) throw Error("Artifact effect is already active.");
+    if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
+    tracker.avallon.effects.push({ id: effectId, name: item.name, sourceItemId: id, bonuses: normalizeBonuses(item.activeBonuses) });
+  }
+  item.charges -= item.chargeCost;
+  return item;
+}
+
+// itemGroups.js
+var stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable(value[k])])) : value;
+var itemNameKey = (item) => String(item.name || "").trim().toLocaleLowerCase();
+function groupNamedItems(rows2, getValue = (row) => row) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const row of rows2) {
+    const v = getValue(row), key = (v.kind || "") + ":" + itemNameKey(v);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return [...groups.values()];
+}
+function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
+  const result = [], known = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    if (item.equippedPart || item.kind === "artifact") {
+      result.push(item);
+      continue;
     }
-    for (const hidden of [...panel.querySelectorAll('input[type="hidden"]')]) cards[1].append(hidden);
-    for (const note of [...panel.querySelectorAll(".combat-notes")]) cards[2].append(note);
-    const notes = [...panel.querySelectorAll(":scope > .muted")];
-    if (notes.length) {
-      const details2 = document.createElement("details");
-      details2.className = "combat-notes";
-      const summary = document.createElement("summary");
-      summary.textContent = "Attack rules";
-      details2.append(summary, ...notes);
-      cards[2].append(details2);
+    const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
+    if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
+    if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
+    if (item.kind !== "prosthesis") delete definition.abilities;
+    else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
+    if (definition.bonuses) {
+      definition.bonuses = structuredClone(definition.bonuses);
+      for (const field of ["skills", "skillCategories"]) if (definition.bonuses[field]) definition.bonuses[field] = Object.entries(definition.bonuses[field]).reduce((result2, [key2, value]) => {
+        const label = String(skillLabels[key2] || key2).trim().toLocaleLowerCase();
+        result2[label] = field === "skills" ? (result2[label] || 0) + value : value;
+        return result2;
+      }, {});
     }
-    const footer = document.createElement("div");
-    footer.className = "od-combat-footer";
-    const attack = panel.querySelector('[data-action="perform-attack"],[data-action="perform-manual-attack"],#environmentAttackBtn');
-    const pick = cards[1].querySelector('[data-action="pick-attack-target"],#pickTargetBtn');
-    const wide = (button, label) => {
-      button.classList.remove("od-icon-button");
-      button.classList.add("od-wide-action");
-      button.textContent = label;
-      button.title = label;
-      button.setAttribute("aria-label", label);
-      footer.append(button);
+    const key = JSON.stringify(stable({ ...definition, name: itemNameKey(item) })), previous = known.get(key);
+    if (previous && previous.quantity + quantity <= 999999) {
+      if (id === preferredId) {
+        item.quantity += previous.quantity;
+        result[result.indexOf(previous)] = item;
+        known.set(key, item);
+      } else previous.quantity += quantity;
+    } else {
+      result.push(item);
+      known.set(key, item);
+    }
+  }
+  return result;
+}
+
+// inventory.js
+var LIMIT = 2e3;
+var int = (v, max = 999999) => Math.min(max, Math.max(0, Math.floor(Number(v) || 0)));
+var text = (v, max = 120) => String(v ?? "").trim().slice(0, max);
+var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "prosthesis", "artifact"]);
+function newId() {
+  return globalThis.crypto.randomUUID();
+}
+function rows(raw, map) {
+  const seen = /* @__PURE__ */ new Set();
+  return (Array.isArray(raw) ? raw : []).slice(0, LIMIT).filter((r) => r && typeof r === "object").map(map).filter((r) => r.id && !seen.has(r.id) && seen.add(r.id));
+}
+function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {}) {
+  const items = rows(raw?.items, (input, i) => {
+    const r = { ...input, kind: input.kind === "implant" ? "prosthesis" : input.kind };
+    return {
+      id: text(r.id || `legacy-item-${i}`),
+      name: text(r.name) || "Item",
+      kind: kinds.has(r.kind) ? r.kind : "item",
+      quantity: int(r.quantity ?? 1),
+      description: text(r.description, 2e3),
+      armor: int(r.armor, 999),
+      subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
+      healCritical: int(r.healCritical ?? 1, 999),
+      useSkill: text(r.useSkill, 80),
+      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
+      slot: text(r.slot || "any", 40),
+      criticalMax: int(r.criticalMax, 999),
+      criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
+      playerRemovable: r.playerRemovable === true,
+      bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), skill: text(a.skill, 80) } : {} })),
+      ...r.kind === "artifact" ? normalizeArtifact(r) : {},
+      legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
+      equippedPart: text(r.equippedPart, 40),
+      previousArmor: int(r.previousArmor, 999)
     };
-    if (attack) wide(attack, kind === "manual" ? "No Target Attack" : "Attack");
-    if (pick) {
-      const field = pick.closest("label");
-      wide(pick, /cancel/i.test(pick.textContent || pick.title) ? "Cancel Target Pick" : "Pick Target On Map");
-      field?.remove();
-    }
-    for (const obsolete of [...panel.querySelectorAll(":scope > .combat-action,:scope > .row")]) obsolete.remove();
-    for (const obsolete of [...panel.querySelectorAll(":scope > .combat-form-grid,:scope > .combat-modifiers")]) obsolete.remove();
-    panel.append(grid, footer);
-    panel.classList.add("od-combat-panel");
+  });
+  for (const item of [...items]) if (item.equippedPart && ["armor", "shield", "prosthesis"].includes(item.kind) && item.quantity > 1) {
+    let id = item.id.slice(0, 90) + "-reserve", suffix = 1;
+    while (items.some((i) => i.id === id)) id = item.id.slice(0, 90) + "-reserve-" + suffix++;
+    items.push({ ...structuredClone(item), id, quantity: item.quantity - 1, equippedPart: "", previousArmor: 0, legacyEquipment: false });
+    item.quantity = 1;
   }
-}
-
-// ui/tooltips.js
-function installTooltips() {
-  const tip = document.createElement("div");
-  tip.className = "od-tooltip";
-  tip.id = "od-hover-tooltip";
-  tip.setAttribute("role", "tooltip");
-  tip.setAttribute("popover", "manual");
-  document.body.append(tip);
-  let active = null;
-  const hide = () => {
-    tip.classList.remove("visible");
-    active?.removeAttribute("aria-describedby");
-    active = null;
-  };
-  const show = (node) => {
-    hide();
-    const text2 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
-    if (!text2) return;
-    active = node;
-    tip.textContent = text2;
-    node.setAttribute("aria-describedby", tip.id);
-    const host = node.closest("dialog[open]") || document.body;
-    if (tip.matches(":popover-open")) tip.hidePopover();
-    if (tip.parentElement !== host) host.append(tip);
-    tip.showPopover();
-    const r = node.getBoundingClientRect();
-    tip.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
-    tip.style.top = Math.max(8, Math.min(r.bottom + 7, innerHeight - tip.offsetHeight - 8)) + "px";
-    requestAnimationFrame(() => {
-      if (active === node) tip.classList.add("visible");
-    });
-  };
-  document.addEventListener("pointerover", (e) => {
-    const node = e.target.closest?.("button,[data-tooltip]");
-    if (node && node !== active && !node.contains(e.relatedTarget)) show(node);
-  });
-  document.addEventListener("pointerout", (e) => {
-    if (active && !active.contains(e.relatedTarget)) hide();
-  });
-  document.addEventListener("focusin", (e) => {
-    const node = e.target.closest?.("button,[data-tooltip]");
-    if (node) show(node);
-  });
-  document.addEventListener("focusout", hide);
-  document.addEventListener("pointerdown", hide);
-  document.addEventListener("scroll", hide, true);
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hide();
-  });
-  new MutationObserver(() => {
-    if (active && !active.isConnected) hide();
-  }).observe(document.body, { childList: true, subtree: true });
-}
-
-// ui/compactButtons.js
-var paths = {
-  info: "M12 11v6 M12 7h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
-  plus: "M12 5v14M5 12h14",
-  close: "m6 6 12 12M18 6 6 18",
-  edit: "m4 16-1 5 5-1L20 8l-4-4Z M14 6l4 4",
-  save: "M5 3h13l3 3v15H3V3Z M7 3v6h10V3 M7 21v-8h10v8",
-  refresh: "M20 7v5h-5M4 17v-5h5 M5 8a8 8 0 0 1 13-3l2 3 M19 16a8 8 0 0 1-13 3l-2-3",
-  target: "M12 2v4m0 12v4M2 12h4m12 0h4 M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0 M12 10v4m-2-2h4",
-  download: "M12 3v12m-5-5 5 5 5-5 M4 16v5h16v-5",
-  upload: "M12 16V4m-5 5 5-5 5 5 M4 16v5h16v-5",
-  cloud: "M6 18a4 4 0 0 1-1-8 7 7 0 0 1 13-1 5 5 0 0 1 0 9Z M12 10v8m-3-3 3 3 3-3",
-  shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z",
-  dice: "M4 4h16v16H4Z M8 8h.01 M16 8h.01 M12 12h.01 M8 16h.01 M16 16h.01",
-  attack: "m4 3 16 17m0-17L4 20 M3 15l6 6m6-18 6 6",
-  heal: "M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z",
-  book: "M3 4h7l2 2 2-2h7v15h-7l-2 2-2-2H3Z M12 6v15",
-  play: "m8 4 12 8-12 8Z",
-  box: "m3 7 9-4 9 4v13H3Z M3 7l9 4 9-4 M12 11v9",
-  window: "M3 3h18v18H3Z M3 8h18 M8 8v13",
-  copy: "M8 8h13v13H8Z M16 8V3H3v13h5"
-};
-function iconFor(text2) {
-  if (/description/i.test(text2)) return "info";
-  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text2)) return "close";
-  if (/edit|rename|set rounds|set magazine/i.test(text2)) return "edit";
-  if (/duplicate/i.test(text2)) return "copy";
-  if (/export|empty to|load from/i.test(text2)) return "download";
-  if (/import/i.test(text2)) return "upload";
-  if (/account/i.test(text2)) return "cloud";
-  if (/save/i.test(text2)) return "save";
-  if (/add|new|^\+/i.test(text2)) return "plus";
-  if (/reload|refresh|rebuild|fill|sync/i.test(text2)) return "refresh";
-  if (/select|pick|target|focus/i.test(text2)) return "target";
-  if (/roll|d100|dice/i.test(text2)) return "dice";
-  if (/attack|resolve/i.test(text2)) return "attack";
-  if (/heal|repair/i.test(text2)) return "heal";
-  if (/equip/i.test(text2)) return "shield";
-  if (/template/i.test(text2)) return "book";
-  if (/hud|window|open/i.test(text2)) return "window";
-  if (/use|apply/i.test(text2)) return "play";
-  return "box";
-}
-function installCompactButtons() {
-  installTooltips();
-  const enhance = () => {
-    for (const button of document.querySelectorAll("button")) {
-      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
-      const text2 = button.textContent.trim();
-      if (!text2 || text2.length <= 2) continue;
-      button.title = text2;
-      button.setAttribute("aria-label", text2);
-      button.classList.add("od-icon-button");
-      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text2)]}"></path></svg>`;
+  items.splice(0, items.length, ...mergeInventoryStacks(items, preferredId, skillLabels));
+  const magazines = [];
+  for (const weapon of weapons) {
+    weapon.acceptsMagazines = false;
+    weapon.acceptedMagazineIds = [];
+    weapon.magazineId = "";
+  }
+  for (const item of [...items]) if (item.kind === "artifact" && item.quantity > 1) {
+    const quantity = item.quantity;
+    if (quantity > 1e3 || items.length + quantity - 1 > 2e3) throw Error("Too many artifact instances.");
+    item.quantity = 1;
+    for (let i = 1; i < quantity; i++) {
+      let id = item.id.slice(0, 90) + "-artifact-" + i;
+      while (items.some((x) => x.id === id)) id += "x";
+      items.push({ ...structuredClone(item), id, equippedPart: "" });
     }
-  };
-  let scheduled = false;
-  new MutationObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      enhance();
-    });
-  }).observe(document.body, { childList: true, subtree: true, characterData: true });
-  enhance();
+  }
+  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 999)])) };
 }
-
-// ui/compactHud.js
-function compactHud({ token, tracker, floating, target, targetData, skills, weapons, draft: draft2, parts, ammunition }) {
-  return `<section class="od-hud cp-screen"><div class="cp-row"><div><span class="cp-section-title">Character</span><h3>${esc(token.name || "Character")}</h3></div><span class="cp-pill">${Object.entries(tracker.body).filter(([k]) => !["Shield", "Special"].includes(k)).reduce((n2, [, p]) => n2 + p.current, 0)} HP</span><button type="button" data-action="${floating ? "close-character-hud" : "open-character-hud"}" class="secondary">${floating ? "Close HUD" : "Floating HUD"}</button></div><div class="od-hud-grid"><div class="cp-card"><div class="cp-section-title">Weapon & skill</div><label>Weapon<select data-hud-attack-field="weaponName">${weapons}</select></label><label>Skill<select data-hud-attack-field="skill">${skills}</select></label>${ammunition.replaceAll("data-attack-field=", "data-hud-attack-field=")}</div><div class="cp-card"><div class="cp-section-title">Target</div><div class="cp-row"><b>${esc(target?.name || "No target selected")}</b><span data-target-distance class="od-target-distance"></span><span data-range-modifier="attack" class="od-range-readout cp-muted"></span><button type="button" data-action="pick-attack-target">Pick on map</button></div><label>Body zone<select data-hud-attack-field="targetPart">${parts.map(([key, label]) => `<option value="${esc(key)}" ${key === draft2.targetPart ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><p class="cp-muted">${targetData ? "Target selected \xB7 V1 armor, Parry and damage rules" : "Select a visible target to attack."}</p></div><div class="cp-card"><div class="cp-section-title">Action</div><label>Attack bonus<input type="number" value="${Number(draft2.attackBonuses) || 0}" data-hud-attack-field="attackBonuses"></label><label>Attack penalty<input type="number" value="${Number(draft2.attackPenalties) || 0}" data-hud-attack-field="attackPenalties"></label><button type="button" data-action="perform-attack" ${!target ? "disabled" : ""}>Attack</button></div></div><p class="cp-muted" role="status">${esc(tracker.lastRoll?.summary || "No rolls yet.")}</p></section>`;
+function equipItem(tracker, id, partName, gm = true) {
+  var _a;
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
+  if (!item || !["armor", "shield", "prosthesis"].includes(item.kind)) throw new Error("Choose equipment.");
+  if (item.kind === "prosthesis" && !gm && !item.playerRemovable) throw new Error("Only the GM can equip this prosthesis.");
+  if (item.quantity < 1 || item.equippedPart) throw new Error("Item is unavailable or already equipped.");
+  const part = tracker.body[partName];
+  if (!part) throw new Error("Body part no longer exists.");
+  if (!equipmentFits(item, partName, part)) throw new Error("This item does not fit the selected slot.");
+  if (item.kind !== "prosthesis" && tracker.avallon.inventory.items.some((i) => ["armor", "shield"].includes(i.kind) && i.equippedPart === partName)) throw new Error("Armor is already equipped on this part.");
+  if (item.quantity > 1) {
+    if (tracker.avallon.inventory.items.length >= 1e3) throw new Error("Inventory is full.");
+    tracker.avallon.inventory.items.push({ ...structuredClone(item), id: newId(), quantity: item.quantity - 1, equippedPart: "", previousArmor: 0, legacyEquipment: false });
+    item.quantity = 1;
+  }
+  (_a = tracker.avallon.inventory).baseArmor ?? (_a.baseArmor = {});
+  if (!Object.hasOwn(tracker.avallon.inventory.baseArmor, partName)) tracker.avallon.inventory.baseArmor[partName] = part.armor;
+  item.equippedPart = partName;
+  item.legacyEquipment = false;
+  reconcileEquipment(tracker);
+}
+function unequipItem(tracker, id, gm = true) {
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
+  if (!item) throw new Error("Item no longer exists.");
+  if (item.kind === "prosthesis" && !gm && !item.playerRemovable) throw new Error("Only the GM can remove this prosthesis.");
+  const part = tracker.body[item.equippedPart], inv = tracker.avallon.inventory;
+  if (part && Object.hasOwn(inv.baseArmor || {}, item.equippedPart)) {
+    const expected = inv.baseArmor[item.equippedPart] + inv.items.filter((i) => i.equippedPart === item.equippedPart && ["armor", "shield", "prosthesis"].includes(i.kind) && i.quantity > 0 && (i.kind === "prosthesis" || !i.criticalMax || i.criticalDamage < i.criticalMax)).reduce((sum, i) => sum + i.armor, 0);
+    if (part.armor !== expected) inv.baseArmor[item.equippedPart] = part.armor;
+  }
+  item.equippedPart = "";
+  tracker.avallon.effects = (tracker.avallon.effects || []).filter((e) => e.sourceItemId !== id);
+  reconcileEquipment(tracker);
+}
+function consumeItem(tracker, id) {
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id);
+  if (!item || !["consumable", "medical", "resource"].includes(item.kind) || item.quantity < 1) throw new Error("No usable item available.");
+  item.quantity -= 1;
+}
+function findInventoryEntry(tracker, type, id) {
+  const o = tracker.avallon;
+  if (type === "ammo") return o.ammunition.find((a) => a.id === id);
+  if (type === "magazine") return o.inventory.magazines.find((m) => m.id === id);
+  if (type?.startsWith("weapon-")) return o.weapons[type.slice(7)]?.find((w, index) => (w.id || String(index)) === id);
+  return o.inventory.items.find((i) => i.id === id);
+}
+function deleteInventoryEntry(tracker, type, id) {
+  const o = tracker.avallon;
+  if (type === "ammo") {
+    if (o.inventory.magazines.some((m) => m.loadedAmmoId === id && m.loaded) || o.weapons.ranged.some((w) => w.acceptsMagazines === false && w.loadedAmmoId === id && w.loaded)) throw new Error("Unload weapons using this ammunition first.");
+    o.ammunition = o.ammunition.filter((a) => a.id !== id);
+    for (const w of o.weapons.ranged) w.ammoIds = w.ammoIds.filter((a) => a !== id);
+    return;
+  }
+  if (type?.startsWith("weapon-")) {
+    const kind = type.slice(7), index = o.weapons[kind].findIndex((w, j) => (w.id || String(j)) === id);
+    if (index < 0) throw new Error("Weapon no longer exists.");
+    if (kind === "ranged") {
+      const w = o.weapons.ranged[index];
+      if (w.acceptsMagazines === false && w.loaded) {
+        const a = o.ammunition.find((a2) => a2.id === w.loadedAmmoId);
+        if (!a || a.quantity + w.loaded > 999999) throw new Error("Cannot return loaded ammunition to reserve.");
+        a.quantity += w.loaded;
+      }
+    }
+    o.weapons[kind].splice(index, 1);
+    return;
+  }
+  const item = o.inventory.items.find((i) => i.id === id);
+  if (!item) throw new Error("Item no longer exists.");
+  if (item.equippedPart) unequipItem(tracker, id, true);
+  o.inventory.items = o.inventory.items.filter((i) => i.id !== id);
+}
+function saveInventoryEntry(tracker, origin, values, id) {
+  const o = tracker.avallon, existing = origin ? findInventoryEntry(tracker, origin.type, origin.id) : null;
+  if (origin && !existing) throw new Error("Item no longer exists.");
+  const kind = values.kind, weaponKind = values.weaponKind === "ranged" ? "ranged" : "melee";
+  const dest = kind === "weapon" ? "weapon-" + weaponKind : kind === "ammo" ? "ammo" : kind === "magazine" ? "magazine" : "item";
+  if (origin && origin.type !== dest) deleteInventoryEntry(tracker, origin.type, origin.id);
+  const same = origin?.type === dest ? existing : null;
+  if (kind === "ammo") {
+    const row2 = { id, name: values.name, description: text(values.description, 2e3), damage: Number(values.damage) || 0, penetration: Number(values.penetration) || 0, quantity: Number(values.quantity) || 0 };
+    if (same) Object.assign(same, row2);
+    else {
+      if (o.ammunition.length >= 200) throw new Error("Too many ammo types.");
+      o.ammunition.push(row2);
+    }
+    return;
+  }
+  if (kind === "magazine") throw Error("Avallon uses internal weapon capacity.");
+  if (kind === "weapon") {
+    if ([...o.weapons.melee, ...o.weapons.ranged].some((w) => w !== same && w.name === values.name)) throw new Error("A weapon with this name already exists.");
+    const row2 = { id, name: values.name, description: text(values.description, 2e3), accuracy: Number(values.accuracy) || 0, damage: Number(values.damage) || 0 };
+    if (weaponKind === "ranged") {
+      row2.weaponCategory = normalizeWeaponCategory(values.weaponCategory);
+      row2.rangeReduction = normalizeRangeReduction(values.rangeReduction);
+      const capacity = Number(values.capacity), ammoIds = values.ammoIds || [], loaded = Number(values.loaded ?? same?.loaded ?? 0), loadedAmmoId = String(values.loadedAmmoId ?? same?.loadedAmmoId ?? "");
+      if (!Number.isInteger(capacity) || capacity < 1 || capacity > 999 || !Number.isInteger(loaded) || loaded < 0 || loaded > capacity) throw new Error("Invalid internal capacity or loaded rounds.");
+      if (loaded && (!ammoIds.includes(loadedAmmoId) || !o.ammunition.some((a) => a.id === loadedAmmoId))) throw new Error("Choose compatible ammunition for loaded rounds.");
+      Object.assign(row2, { acceptsMagazines: false, acceptedMagazineIds: [], capacity, ammoIds, loaded, loadedAmmoId: loaded ? loadedAmmoId : "", magazineId: "" });
+    }
+    if (same) Object.assign(same, row2);
+    else {
+      if (o.weapons[weaponKind].length >= 20) throw new Error("Weapon limit is 20 per type.");
+      o.weapons[weaponKind].push(row2);
+    }
+    return;
+  }
+  if (same?.equippedPart && !["armor", "shield", "prosthesis", "artifact"].includes(kind)) unequipItem(tracker, id, true);
+  const row = { ...values, ...kind === "artifact" ? normalizeArtifact(values) : {}, id, quantity: Number(values.quantity) || 0, armor: Number(values.armor) || 0, healCritical: Number(values.healCritical) || 0, criticalMax: Number(values.criticalMax) || 0, criticalDamage: Number(values.criticalDamage) || 0, playerRemovable: values.playerRemovable === true, legacyEquipment: false, equippedPart: same?.equippedPart || "", previousArmor: same?.previousArmor || 0 };
+  if (!["armor", "shield", "prosthesis"].includes(kind)) {
+    row.armor = 0;
+    row.criticalMax = 0;
+    row.criticalDamage = 0;
+  }
+  if (kind === "prosthesis") row.criticalDamage = 0;
+  if (row.equippedPart && row.quantity > 1 && o.inventory.items.length >= 1e3) throw new Error("Inventory is full; cannot separate equipped and spare items.");
+  if (row.criticalDamage > row.criticalMax) throw new Error("Critical damage cannot exceed durability.");
+  if (kind !== "artifact" && same?.equippedPart && !equipmentFits(row, same.equippedPart, tracker.body[same.equippedPart])) throw new Error("Unequip before changing the equipment slot.");
+  if (same) Object.assign(same, row);
+  else {
+    if (o.inventory.items.length >= 1e3) throw new Error("Inventory limit is 1000 items.");
+    o.inventory.items.push(row);
+  }
+  o.inventory = normalizeInventory(o.inventory, o.weapons.ranged, id, o.skillLabels);
+  reconcileEquipment(tracker);
 }
 
 // itemPool.js
@@ -1713,27 +1054,22 @@ function captureBlueprint(tracker, type, id) {
     const kind = type.slice(7);
     values = { kind: "weapon", weaponKind: kind, name: entry.name, accuracy: entry.accuracy, damage: entry.damage, ...kind === "ranged" && entry.weaponCategory ? { weaponCategory: entry.weaponCategory } : {}, ...kind === "ranged" && Object.values(entry.rangeReduction || {}).some(Boolean) ? { rangeReduction: structuredClone(entry.rangeReduction) } : {} };
     if (kind === "ranged") {
-      values.acceptsMagazines = entry.acceptsMagazines !== false;
+      values.acceptsMagazines = false;
       values.loaded = 0;
       values.loadedAmmoId = "";
       values.magazineId = "";
-      if (values.acceptsMagazines) {
-        let magazines = o.inventory.magazines.filter((m) => m.id === entry.magazineId || magazineCompatible(o, entry, m));
-        if (!magazines.length && entry.capacity) magazines = [{ name: entry.name + " magazine", capacity: entry.capacity }];
-        dependencies.magazines = uniqueDefinitions(magazines, (m) => ({ name: m.name, capacity: m.capacity })).map((m, index) => ({ id: "mag-" + index, ...m }));
-        values.acceptedMagazineIds = dependencies.magazines.map((m) => m.id);
-      } else {
-        dependencies.ammunition = uniqueDefinitions(o.ammunition.filter((a) => entry.ammoIds.includes(a.id)), ammoDefinition).map((a, index) => ({ id: "ammo-" + index, ...a }));
-        values.capacity = entry.capacity;
-        values.ammoIds = dependencies.ammunition.map((a) => a.id);
-      }
+      dependencies.ammunition = uniqueDefinitions(o.ammunition.filter((a) => entry.ammoIds.includes(a.id)), ammoDefinition).map((a, index) => ({ id: "ammo-" + index, ...a }));
+      values.capacity = entry.capacity;
+      values.ammoIds = dependencies.ammunition.map((a) => a.id);
     }
   } else {
     values = {};
-    for (const key of ["kind", "name", "description", "armor", "criticalMax", "playerRemovable", "slots", "subtype", "healCritical", "abilities", "bonuses"]) if (entry[key] !== void 0) values[key] = structuredClone(entry[key]);
+    for (const key of ["kind", "name", "description", "armor", "criticalMax", "playerRemovable", "slots", "subtype", "healCritical", "abilities", "bonuses", "chargeMax", "charges", "chargeCost", "artifactEffect", "effectAmount", "activeBonuses"]) if (entry[key] !== void 0) values[key] = structuredClone(entry[key]);
+    if (values.kind === "artifact") values.charges = values.chargeMax;
     values.quantity = 1;
     values.criticalDamage = 0;
     values.slots ?? (values.slots = [entry.slot || "any"]);
+    if (values.activeBonuses?.skills) values.activeBonuses.skills = Object.fromEntries(Object.entries(values.activeBonuses.skills).map(([key, value]) => [o.skillLabels[key] || key, value]));
     if (values.bonuses) {
       const skills = {};
       for (const [key, value] of Object.entries(values.bonuses.skills || {})) {
@@ -1752,14 +1088,23 @@ function captureBlueprint(tracker, type, id) {
   return { format: "avallon-item-blueprint", version: 1, type, values, dependencies };
 }
 function validateBlueprint(raw) {
+  if (raw?.values?.kind === "implant") raw = { ...raw, values: { ...raw.values, kind: "prosthesis" } };
   if (raw?.format !== "avallon-item-blueprint" || raw.version !== 1 || !TYPES.has(raw.type) || !raw.values || typeof raw.values.name !== "string" || !raw.values.name.trim() || raw.values.name.length > 120) throw new Error("Invalid item pool definition.");
-  if (!["item", "consumable", "medical", "tool", "resource", "armor", "shield", "implant", "ammo", "magazine", "weapon"].includes(raw.values.kind)) throw new Error("Invalid item type.");
+  if (!["item", "consumable", "medical", "tool", "resource", "armor", "shield", "prosthesis", "artifact", "ammo", "magazine", "weapon"].includes(raw.values.kind)) throw new Error("Invalid item type.");
   const expected = raw.type.startsWith("weapon-") ? "weapon" : raw.type === "item" ? null : raw.type;
   if (raw.type === "item" && ["weapon", "ammo", "magazine"].includes(raw.values.kind)) throw new Error("Item type does not match its definition.");
   if (expected && raw.values.kind !== expected) throw new Error("Item type does not match its definition.");
   for (const key of ["ammunition", "magazines"]) if (!Array.isArray(raw.dependencies?.[key]) || raw.dependencies[key].length > 200 || raw.dependencies[key].some((d) => !d || typeof d.id !== "string" || typeof d.name !== "string")) throw new Error("Invalid item dependencies.");
   if (blueprintText(raw).length > 2e5) throw new Error("Item definition is too large.");
-  return structuredClone(raw);
+  const result = structuredClone(raw);
+  if (result.type === "weapon-ranged" && result.values.acceptsMagazines !== false) {
+    result.values.acceptsMagazines = false;
+    result.values.capacity = result.values.capacity || result.dependencies.magazines[0]?.capacity || 1;
+    result.values.ammoIds = result.values.ammoIds || [];
+    result.dependencies.magazines = [];
+    result.values.acceptedMagazineIds = [];
+  }
+  return result;
 }
 async function blueprintId(blueprint) {
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(blueprintText(blueprint)));
@@ -1779,10 +1124,10 @@ function poolEntries(metadata) {
 }
 function parsePoolJSON(raw) {
   if (raw?.format !== ITEM_POOL_FORMAT || raw.version !== 1 || !Array.isArray(raw.entries) || raw.entries.length > 2e3) throw new Error("Choose an Avallon item pool JSON (version 1).");
-  return raw.entries.map(validateBlueprint);
+  return raw.entries.filter((b) => b?.type !== "magazine").map(validateBlueprint);
 }
 function exportPool(entries) {
-  return { format: ITEM_POOL_FORMAT, version: 1, entries: entries.map((e) => e.blueprint) };
+  return { format: ITEM_POOL_FORMAT, version: 1, entries: entries.filter((e) => e.blueprint.type !== "magazine").map((e) => e.blueprint) };
 }
 function copyBlueprint(tracker, raw, quantity = 1, id = newId()) {
   const blueprint = validateBlueprint(raw), o = tracker.avallon, values = structuredClone(blueprint.values), ammoIds = /* @__PURE__ */ new Map(), magazineIds = /* @__PURE__ */ new Map();
@@ -1832,6 +1177,7 @@ function copyBlueprint(tracker, raw, quantity = 1, id = newId()) {
     if (Object.keys(categories).length) values.bonuses.skillCategories = categories;
     values.bonuses.skills = skills;
   }
+  if (values.activeBonuses?.skills) values.activeBonuses.skills = Object.fromEntries(Object.entries(values.activeBonuses.skills).map(([label, value]) => [Object.keys(o.skills).find((k) => k.toLowerCase() === label.toLowerCase() || String(o.skillLabels[k] || k).toLowerCase() === label.toLowerCase()) || label, value]));
   if (blueprint.type === "ammo") {
     const existing = o.ammunition.find((a) => sameAmmo(a, values));
     if (existing) {
@@ -2015,18 +1361,18 @@ function armorPoolTier(armor, torso = false) {
 }
 function poolCategoryPaths(blueprint) {
   const v = blueprint.values;
-  if (v.kind === "armor" || v.kind === "shield" || v.kind === "implant") {
+  if (v.kind === "armor" || v.kind === "shield" || v.kind === "prosthesis") {
     let slots = Array.isArray(v.slots) ? v.slots : [v.slot || "any"];
     if (slots.includes("any")) slots = ["Torso", "Head", "L.Arm", "R.Arm", "L.Leg", "R.Leg", "other"];
     const parts = [...new Map(slots.map((key) => {
       const value = SLOTS[key] || [key, false];
       return [value[0], value];
     })).values()];
-    return parts.map(([label, torso]) => v.kind === "implant" ? ["Implants", label] : ["Armor", armorPoolTier(v.armor, torso), label]);
+    return parts.map(([label, torso]) => v.kind === "prosthesis" ? ["Prostheses", label] : ["Armor", armorPoolTier(v.armor, torso), label]);
   }
   if (v.kind === "consumable" || v.kind === "medical") return [["Usables", { grenade: "Grenades", medkit: "Medkits", repairkit: "Repair kits", stim: "Stims" }[v.subtype] || "Other usables"]];
   if (v.kind === "weapon") return [v.weaponKind === "ranged" ? ["Weapons", "Ranged", weaponCategoryLabel(v.weaponCategory)] : ["Weapons", "Melee"]];
-  return [[{ ammo: "Ammunition", magazine: "Magazines", resource: "Resources", tool: "Tools" }[v.kind] || "Other items"]];
+  return [[{ ammo: "Ammunition", magazine: "Magazines", artifact: "Artifacts", resource: "Resources", tool: "Tools" }[v.kind] || "Other items"]];
 }
 function groupPoolEntries(entries) {
   const root = { children: /* @__PURE__ */ new Map(), entries: /* @__PURE__ */ new Map() };
@@ -2039,7 +1385,7 @@ function groupPoolEntries(entries) {
     }
     node.entries.set(entry.id, entry);
   }
-  const order = ["Usables", "Resources", "Ammunition", "Magazines", "Weapons", "Armor", "Implants", "Tools", "Other items", ...ARMOR_POOL_TIERS, "Torso", "Head", "Left Arm", "Right Arm", "Left Leg", "Right Leg", "Shield", "Special", "Other parts"];
+  const order = ["Usables", "Resources", "Artifacts", "Ammunition", "Magazines", "Weapons", "Armor", "Prostheses", "Tools", "Other items", ...ARMOR_POOL_TIERS, "Torso", "Head", "Left Arm", "Right Arm", "Left Leg", "Right Leg", "Shield", "Special", "Other parts"];
   const result = (node) => [...node.children.values()].sort((a, b) => {
     const ai = order.indexOf(a.label), bi = order.indexOf(b.label);
     return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.label.localeCompare(b.label);
@@ -2047,11 +1393,239 @@ function groupPoolEntries(entries) {
   return result(root);
 }
 
+// ui/magicTools.js
+function manaRow(o, gm) {
+  const pool = manaStatus(o);
+  return '<div class="cp-row av-mana-row"><span class="cp-pill" data-mana-current>' + pool.current + " / " + pool.max + " mana</span>" + (gm ? '<button type="button" data-magic-action="mana" title="Set current mana">Edit mana</button>' : "") + "</div>";
+}
+function abilityRows(o, gm) {
+  const pool = manaStatus(o), rows2 = o.abilities || [];
+  if (!rows2.length) return "";
+  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + "><span><b>" + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 " + a.cost + " mana</span></span>" + (a.kind === "attack" ? '<span class="cp-muted">DMG ' + a.damage + " \xB7 " + esc(a.skill) + "</span>" : "") + "</button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
+}
+function abilityEditor(existing = {}, skills = []) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "od-dialog od-item-editor";
+  const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
+  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Type<select name="kind"><option value="utility">Utility</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '<label>Attack skill<select name="skill"><option value="">Choose skill</option>' + skills.map(([key, label]) => '<option value="' + esc(label) + '" ' + ([key, label].includes(existing.skill) ? "selected" : "") + ">" + esc(label) + "</option>").join("") + '</select></label></div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
+  const form = dialog.querySelector("form");
+  form.elements.kind.value = existing.kind || "utility";
+  const toggle = () => {
+    form.querySelector("[data-attack-fields]").hidden = form.elements.kind.value !== "attack";
+    form.querySelector("[data-bonus-fields]").hidden = form.elements.kind.value !== "bonus";
+    form.elements.skill.required = form.elements.kind.value === "attack";
+  };
+  form.elements.kind.onchange = toggle;
+  toggle();
+  document.body.append(dialog);
+  dialog.showModal();
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    form.querySelector("[data-cancel]").onclick = () => finish(null);
+    form.querySelector("[data-delete]")?.addEventListener("click", () => finish({ delete: true }));
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      finish(null);
+    });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(form)), bonuses = { attributes: {}, skills: {} };
+      for (const [key, value] of Object.entries(data)) {
+        if (key.startsWith("attr:") && Number(value)) bonuses.attributes[key.slice(5)] = Number(value);
+        if (key.startsWith("skill:") && Number(value)) bonuses.skills[key.slice(6)] = Number(value);
+      }
+      if (!data.name.trim()) {
+        form.elements.name.focus();
+        return;
+      }
+      finish(normalizeAbilities([{ ...data, id: existing.id || crypto.randomUUID(), bonuses }])[0]);
+    };
+  });
+}
+function installMagicTools(host) {
+  let busy = false;
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-magic-action]");
+    if (!node || busy || node.disabled) return;
+    busy = true;
+    (async () => {
+      const token = host.getToken(), id = token?.id;
+      if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
+      const action = node.dataset.magicAction, gm = host.getRole() === "GM", t = host.tracker(token), abilityId = node.dataset.id;
+      if (["add", "edit", "mana"].includes(action) && !gm) throw Error("Only the GM can edit abilities or mana.");
+      if (action === "prepare") {
+        host.prepare(id, "magic:" + abilityId);
+        host.status("Ability selected in Attack.", "success");
+        return;
+      }
+      if (action === "add" || action === "edit") {
+        const existing = t.avallon.abilities.find((a) => a.id === abilityId);
+        if (action === "edit" && !existing) throw Error("Ability no longer exists.");
+        const o = host.effective(token), value = await abilityEditor(existing, Object.keys(o.skills).map((key) => [key, o.skillLabels[key] || key]));
+        if (!value) return;
+        await host.update(id, (current2) => {
+          if (host.getRole() !== "GM") throw Error("Only the GM can edit abilities.");
+          const next = structuredClone(current2);
+          next.avallon.abilities = next.avallon.abilities.filter((a) => a.id !== abilityId);
+          next.avallon.effects = next.avallon.effects.filter((e) => e.id !== "ability-effect:" + abilityId);
+          if (!value.delete) {
+            if (next.avallon.abilities.length >= 100) throw Error("Ability limit is 100.");
+            next.avallon.abilities.push(value);
+          }
+          return next;
+        });
+      } else if (action === "mana") {
+        const dialog = document.createElement("dialog");
+        dialog.className = "od-dialog";
+        const pool = manaStatus(t.avallon);
+        dialog.innerHTML = "<form><h2>Current mana</h2><label>Mana \xB7 maximum " + pool.max + '<input name="current" type="number" min="0" max="' + pool.max + '" step="0.5" value="' + pool.current + '"></label><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></form>';
+        document.body.append(dialog);
+        dialog.showModal();
+        const value = await new Promise((resolve) => {
+          const finish = (v) => {
+            dialog.close();
+            dialog.remove();
+            resolve(v);
+          };
+          dialog.querySelector("[data-cancel]").onclick = () => finish(null);
+          dialog.addEventListener("cancel", (e) => {
+            e.preventDefault();
+            finish(null);
+          });
+          dialog.querySelector("form").onsubmit = (e) => {
+            e.preventDefault();
+            finish(Number(e.target.elements.current.value));
+          };
+        });
+        if (value === null) return;
+        await host.update(id, (current2) => {
+          if (host.getRole() !== "GM") throw Error("Only GM can set mana.");
+          const next = structuredClone(current2);
+          setMana(next.avallon, value);
+          return next;
+        });
+      } else if (action === "use") {
+        let used;
+        await host.update(id, (current2) => {
+          if (!host.canControl(token)) throw Error("Character unavailable.");
+          const next = structuredClone(current2);
+          used = activateAbility(next, abilityId);
+          next.lastRoll = { summary: used.name + " \xB7 used " + used.cost + " mana", outcome: "ability-use", actorName: token.name, eventId: 0, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
+          return next;
+        });
+        try {
+          await host.log(token.name + " uses " + used.name, used.cost + " mana spent", "success");
+        } catch {
+          host.status("Ability saved and mana spent; public log unavailable.", "error");
+          host.render();
+          return;
+        }
+      }
+      host.render();
+      host.status("Saved.", "success");
+    })().catch((e) => host.status(e.message, "error")).finally(() => {
+      busy = false;
+      host.render();
+    });
+  });
+}
+
+// implantAbilities.js
+function activeImplantAbilities(o) {
+  return (o.inventory?.items || []).filter((i) => i.kind === "prosthesis" && i.equippedPart && i.quantity > 0).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
+}
+function implantAttacks(o) {
+  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, boundSkill: ability.skill, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0 }));
+}
+function resolveAbilitySkill(o, label) {
+  return Object.keys(o.skills).find((k) => k.toLocaleLowerCase() === String(label).trim().toLocaleLowerCase() || String(o.skillLabels[k] || k).toLocaleLowerCase() === String(label).trim().toLocaleLowerCase()) || "";
+}
+function activateImplantAbility(tracker, itemId, abilityId) {
+  var _a;
+  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId && r.ability.kind === "bonus");
+  if (!row) throw Error("Equipped prosthesis ability is unavailable.");
+  const effect = { id: "implant-effect:" + itemId + ":" + abilityId, name: row.item.name + " \xB7 " + row.ability.name, sourceItemId: itemId, bonuses: normalizeBonuses(row.ability.bonuses) };
+  (_a = tracker.avallon).effects ?? (_a.effects = []);
+  if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
+  if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
+  tracker.avallon.effects.push(effect);
+  return effect;
+}
+
+// ui/characterView.js
+var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
+function attributeCards(o, fields, editable) {
+  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
+    const delta = o.modifiers?.attributes?.[k] || 0;
+    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
+  }).join("")}</div></div>`;
+}
+function skillCards(o, groups, editable) {
+  const passives = Object.entries(ARMOR_TRAINING).filter(([k]) => Object.hasOwn(o.skills, k) && (editable || o.skills[k] === 1));
+  const skillRow = ([k, value]) => {
+    const name = o.skillLabels[k] || k, perks = o.skillPerks[k] || [], mod = o.modifiers?.skills?.[k] || 0;
+    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
+    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc(k) + '" aria-label="Roll ' + esc(name) + '"><span><b>' + esc(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc(k) + '" aria-label="Edit ' + esc(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
+  };
+  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + (editable ? '<button type="button" data-magic-action="add">+ Ability</button>' : "") + "</div>" + manaRow(o, editable) + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + abilityRows(o, editable) + prosthesisAbilityRows(o) + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
+}
+function effectChips(o, gm) {
+  const rows2 = o.effectRows || [];
+  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc(bonusText(e.bonuses))}"><b>${esc(e.name)}</b> ${esc(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc(e.id)}" aria-label="Remove ${esc(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
+}
+function inventoryView(tracker, gm) {
+  const o = tracker.avallon, inv = o.inventory;
+  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Remove item">\xD7</button>` : "";
+  const renderItem = (i) => {
+    const equipment = ["armor", "shield", "prosthesis"].includes(i.kind), broken = i.kind !== "prosthesis" && i.criticalMax > 0 && i.criticalDamage >= i.criticalMax;
+    const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
+    let controls = "";
+    if (i.kind === "artifact") {
+      controls = (i.artifactEffect === "property" ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>" + (i.equippedPart && i.artifactEffect !== "property" ? '<button type="button" data-artifact-action="use" data-id="' + esc(i.id) + '" ' + (i.charges < i.chargeCost ? "disabled" : "") + ">Use \xB7 " + i.chargeCost + " charges</button>" : "");
+    } else if (equipment) {
+      const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
+      if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
+      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc(i.id) + '">Unequip</button>';
+      else {
+        const options = Object.entries(tracker.body).filter(([key, p]) => (gm || !p.hidden) && equipmentFits(i, key, p) && (i.kind === "prosthesis" || !inv.items.some((other) => ["armor", "shield"].includes(other.kind) && other.equippedPart === key)));
+        controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
+      }
+    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
+    return '<article class="cp-card"><div class="cp-row"><b>' + esc(i.name) + '</b><span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
+  };
+  const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
+  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
+  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
+  const mags = "";
+  const weapons = ["melee", "ranged"].flatMap((kind) => o.weapons[kind].map((w, index) => {
+    let controls = "";
+    if (gm && kind === "ranged") {
+      controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload</button></div>';
+    }
+    return '<article class="cp-card"><div class="cp-row"><b>' + esc(w.name) + '</b><span class="cp-pill">' + esc(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 Capacity " + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
+  }));
+  const group = (label, html) => html ? `<div class="cp-section-title">${label}</div><div class="cp-list">${html}</div>` : "";
+  return `<div class="cp-screen">${gm ? '<div class="cp-row"><button type="button" data-od-action="add-item">+ Item</button><button type="button" data-od-action="open-item-pool">Campaign item pool</button></div>' : ""}${group("Equipped", equippedItems)}${group("Items", items)}${group("Weapons", weapons.join(""))}${group("Ammunition", ammo)}${!equippedItems && !items && !ammo && !mags && !weapons.length ? '<p class="cp-muted">Inventory is empty.</p>' : ""}</div>`;
+}
+function templatesView(library, gm) {
+  if (!gm) return "";
+  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
+}
+function prosthesisAbilityRows(o) {
+  return activeImplantAbilities(o).map(({ item, ability, key }) => '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + " \xB7 " + esc(ability.skill) + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '">Prepare attack</button>' : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + ((o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id) ? "disabled" : "") + ">Activate bonuses</button>") + "</article>").join("");
+}
+
 // ui/itemPoolView.js
 function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImport, onRefresh, onAccountSave, onAccountLoad }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-pool-dialog";
-  dialog.innerHTML = '<div class="cp-row"><h2>Campaign item pool</h2><button type="button" data-pool-close aria-label="Close item pool">\xD7</button></div><p>Give reusable items to ' + esc(character) + '. The pool is shared in this scene and backed up in this browser for this room. Open the extension after changing scenes to restore the pool. Copied equipment is unequipped; magazines are empty.</p><div class="cp-row"><input type="search" data-pool-search placeholder="Search items" aria-label="Search item pool"><button type="button" data-pool-refresh title="Refresh item pool" aria-label="Refresh item pool">\u21BB</button><button type="button" data-pool-export>Export item pool</button><button type="button" data-pool-import>Import item pool</button><button type="button" data-pool-account-save title="Save item pool to account" aria-label="Save item pool to account">Save to account</button><button type="button" data-pool-account-load title="Load item pool from account" aria-label="Load item pool from account">Load from account</button></div><div class="cp-row"><button type="button" data-pool-expand title="Expand categories" aria-label="Expand categories">\u25BE</button><button type="button" data-pool-collapse title="Collapse categories" aria-label="Collapse categories">\u25B8</button></div><p data-pool-warning class="cp-banner err" role="alert" hidden></p><p data-pool-status role="status"></p><div class="cp-list" data-pool-list></div>';
+  dialog.innerHTML = '<div class="cp-row"><h2>Campaign item pool</h2><button type="button" data-pool-close aria-label="Close item pool">\xD7</button></div><p>Give reusable items to ' + esc(character) + '. The pool is shared in this scene and backed up in this browser for this room. Open the extension after changing scenes to restore the pool. Copied equipment is unequipped; ranged weapons are unloaded.</p><div class="cp-row"><input type="search" data-pool-search placeholder="Search items" aria-label="Search item pool"><button type="button" data-pool-refresh title="Refresh item pool" aria-label="Refresh item pool">\u21BB</button><button type="button" data-pool-export>Export item pool</button><button type="button" data-pool-import>Import item pool</button><button type="button" data-pool-account-save title="Save item pool to account" aria-label="Save item pool to account">Save to account</button><button type="button" data-pool-account-load title="Load item pool from account" aria-label="Load item pool from account">Load from account</button></div><div class="cp-row"><button type="button" data-pool-expand title="Expand categories" aria-label="Expand categories">\u25BE</button><button type="button" data-pool-collapse title="Collapse categories" aria-label="Collapse categories">\u25B8</button></div><p data-pool-warning class="cp-banner err" role="alert" hidden></p><p data-pool-status role="status"></p><div class="cp-list" data-pool-list></div>';
   document.body.append(dialog);
   let busy = false;
   const expanded = /* @__PURE__ */ new Map();
@@ -2065,7 +1639,7 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
     for (const details2 of list.querySelectorAll("details[data-pool-category]")) expanded.set(details2.dataset.poolCategory, details2.open);
     const row = (e) => {
       const b = e.blueprint, v = b.values;
-      return '<article class="cp-card cp-row"><b>' + esc(v.name) + '</b><span class="cp-pill">' + esc(v.kind) + '</span><span class="cp-muted">' + esc([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
+      return '<article class="cp-card cp-row"><b>' + esc(v.name) + '</b><span class="cp-pill">' + esc(v.kind) + '</span><span class="cp-muted">' + esc([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.kind === "artifact" && v.artifactEffect !== "property" ? "Charges " + v.chargeMax + " \xB7 cost " + v.chargeCost : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
     };
     const rows2 = (entries) => groupNamedItems(entries, (e) => ({ ...e.blueprint.values, kind: e.blueprint.type === "item" ? e.blueprint.values.kind : e.id })).map((group) => group.length === 1 ? row(group[0]) : '<details class="cp-card od-named-group"><summary>' + esc(group[0].blueprint.values.name) + " \xB7 " + group.length + " variants</summary>" + group.map(row).join("") + "</details>").join("");
     if (search) {
@@ -2139,17 +1713,15 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
 }
 
 // ui/itemEditor.js
-var ITEM_TYPES = [["consumable", "Usable"], ["resource", "Resource"], ["ammo", "Ammunition"], ["magazine", "Magazine"], ["weapon", "Weapon"], ["armor", "Armor"], ["shield", "Shield"], ["implant", "Implant"]];
-function itemEditor({ existing = {}, type = "resource", skills = [], parts = [], ammunition = [], magazines = [] }) {
+var ITEM_TYPES = [["consumable", "Usable"], ["resource", "Resource"], ["ammo", "Ammunition"], ["weapon", "Weapon"], ["armor", "Armor"], ["shield", "Shield"], ["prosthesis", "Prosthesis"], ["artifact", "Artifact"]];
+function itemEditor({ existing = {}, type = "resource", skills = [], parts = [], ammunition = [] }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
-  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${name === "abilityCost" ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
+  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "effectAmount"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
   const select = (name, label, options, value) => `<label>${esc(label)}<select name="${name}">${options.map(([k, l]) => `<option value="${esc(k)}" ${k === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
   const checkbox = (name, label, checked) => `<label class="od-check"><input name="${name}" type="checkbox" ${checked ? "checked" : ""}>${esc(label)}</label>`;
-  const values = { ...existing, kind: type, acceptsMagazines: existing.acceptsMagazines !== false };
+  const values = { ...existing, kind: type, acceptsMagazines: false };
   values.slots ?? (values.slots = [existing.slot || "any"]);
-  values.acceptedMagazineIds ?? (values.acceptedMagazineIds = existing.id ? magazines.filter((m) => m.id === existing.magazineId || m.capacity === existing.capacity && (!m.loaded || (existing.ammoIds || []).includes(m.loadedAmmoId))).map((m) => m.id) : []);
-  const magazineChoices = [...new Map(magazines.map((m) => [JSON.stringify([m.name, m.capacity]), m])).values()];
   const skillChoices = [...skills];
   const findSkill = (rows2, name) => rows2.find(([key, label]) => [key, label].some((v) => String(v).trim().toLowerCase() === String(name).trim().toLowerCase()));
   const ownSkill = (name) => findSkill(skills, name);
@@ -2215,9 +1787,15 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       values.useSkill = match ? match[1] : input;
     }
     if (form.elements.acceptsMagazines) values.acceptsMagazines = form.elements.acceptsMagazines.checked;
-    if (form.querySelector('[name="magazineCompatible"]')) values.acceptedMagazineIds = [...form.querySelectorAll('[name="magazineCompatible"]:checked')].map((e) => e.value);
     if (form.querySelector("[data-equipment-slots]")) values.slots = [...form.querySelectorAll('[name="equipmentSlot"]:checked')].map((e) => e.value);
     values.playerRemovable = !!form.elements.playerRemovable?.checked;
+    if (values.kind === "artifact" && form.querySelector('[name^="activeAttr:"]')) {
+      values.activeBonuses = { attributes: {}, skills: {} };
+      for (const input of form.querySelectorAll('[name^="activeAttr:"],[name^="activeSkill:"]')) {
+        const [type2, ...key] = input.name.split(":");
+        if (Number(input.value)) values.activeBonuses[type2 === "activeAttr" ? "attributes" : "skills"][key.join(":")] = Number(input.value);
+      }
+    }
     const bonuses = { attributes: {}, skills: {}, skillCategories: {} };
     for (const input of form.querySelectorAll('[name^="attr:"],[name^="skill:"]')) {
       const [kind, ...key] = input.name.split(":");
@@ -2245,25 +1823,29 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       if (!values.subtype || values.subtype === "grenade") html += '<p class="cp-muted">Grenades have no action yet.</p>';
     }
     if (kind === "resource") html += bonusEditor(values.bonuses, true, false);
+    if (kind === "artifact") {
+      html += field("chargeMax", "Maximum charges", values.chargeMax ?? 5, "number") + field("charges", "Current charges \xB7 GM correction", values.charges ?? values.chargeMax ?? 5, "number") + field("chargeCost", "Charges per use", values.chargeCost ?? 1, "number") + select("artifactEffect", "Active effect", [["property", "Passive property only"], ["mana", "Restore mana"], ["heal", "Heal body HP"], ["bonus", "Activate bonuses"]], values.artifactEffect || "property");
+      if (["mana", "heal"].includes(values.artifactEffect)) html += field("effectAmount", values.artifactEffect === "mana" ? "Mana restored" : "Critical wounds restored", values.effectAmount ?? 1, "number");
+      html += bonusEditor(values.bonuses, true, false);
+      if (values.artifactEffect === "bonus") html += '<fieldset class="od-bonuses"><legend>Active bonuses \xB7 spend charges</legend>' + ATTRIBUTES.map((k) => field("activeAttr:" + k, k, values.activeBonuses?.attributes?.[k] || 0, "number")).join("") + skillChoices.map(([k, label]) => field("activeSkill:" + k, label + " \xB7 level bonus", values.activeBonuses?.skills?.[k] || 0, "number")).join("") + "</fieldset>";
+      html += '<p class="cp-muted">Passive bonuses and properties work while equipped. Active effects use this artifact\u2019s charges. The GM restores charges manually. Healing affects body wounds, not armor.</p>';
+    }
     if (kind === "ammo") html += field("damage", "Damage / round", values.damage ?? 0, "number") + field("penetration", "Armor penetration", values.penetration ?? 0, "number");
-    if (kind === "magazine") html += field("capacity", "Capacity", values.capacity ?? 6, "number") + field("loaded", "Rounds \xB7 GM correction", values.loaded ?? 0, "number") + select("loadedAmmoId", "Ammunition", [["", "Empty"], ...ammunition.map((a) => [a.id, a.name])], values.loadedAmmoId || "");
     if (kind === "weapon") {
       html += select("weaponKind", "Weapon type", [["melee", "Melee"], ["ranged", "Ranged"]], values.weaponKind || "melee") + field("accuracy", "Accuracy", values.accuracy ?? 0, "number");
       if (values.weaponKind === "ranged") {
         html += select("weaponCategory", "Weapon category", WEAPON_CATEGORIES, values.weaponCategory || "") + rangeEditor("weaponRange:", values.rangeReduction);
-        html += checkbox("acceptsMagazines", "Accepts detachable magazines", values.acceptsMagazines);
-        if (values.acceptsMagazines) html += "<fieldset><legend>Compatible magazines</legend>" + magazineChoices.map((m) => checkbox("magazineCompatible", m.name + " \xB7 " + m.capacity + " rounds", values.acceptedMagazineIds.some((id) => magazines.some((reference) => reference.id === id && reference.name === m.name && reference.capacity === m.capacity))).replace('name="magazineCompatible"', 'name="magazineCompatible" value="' + esc(m.id) + '"')).join("") + (magazines.length ? "" : '<p class="cp-muted">Create a magazine in Items first.</p>') + "</fieldset>";
-        else html += field("capacity", "Built-in magazine capacity", values.capacity || 6, "number") + field("loaded", "Loaded rounds \xB7 GM correction", values.loaded || 0, "number") + select("loadedAmmoId", "Loaded ammunition", [["", "Empty"], ...ammunition.map((a) => [a.id, a.name])], values.loadedAmmoId || "") + "<fieldset><legend>Compatible ammunition</legend>" + ammunition.map((a) => checkbox("ammoCompatible", a.name, (values.ammoIds || []).includes(a.id)).replace('name="ammoCompatible"', 'name="ammoCompatible" value="' + esc(a.id) + '"')).join("") + "</fieldset>";
+        html += field("capacity", "Internal capacity", values.capacity || 6, "number") + field("loaded", "Loaded rounds \xB7 GM correction", values.loaded || 0, "number") + select("loadedAmmoId", "Loaded ammunition", [["", "Empty"], ...ammunition.map((a) => [a.id, a.name])], values.loadedAmmoId || "") + "<fieldset><legend>Compatible ammunition</legend>" + ammunition.map((a) => checkbox("ammoCompatible", a.name, (values.ammoIds || []).includes(a.id)).replace('name="ammoCompatible"', 'name="ammoCompatible" value="' + esc(a.id) + '"')).join("") + "</fieldset>";
       } else html += field("damage", "Damage", values.damage ?? 0, "number");
     }
-    if (["armor", "shield", "implant"].includes(kind)) {
-      html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "implant" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "implant" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc(key) + '"')).join("") + "</fieldset>";
-      if (kind === "implant") html += '<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
-      if (kind === "implant") html += checkbox("playerRemovable", "Player may equip / remove this implant", values.playerRemovable) + bonusEditor(values.bonuses, true, false) + `<fieldset><legend>Granted abilities \xB7 available only while equipped</legend><div data-abilities>${(values.abilities || []).map(abilityRow).join("")}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
+    if (["armor", "shield", "prosthesis"].includes(kind)) {
+      html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "prosthesis" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "prosthesis" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc(key) + '"')).join("") + "</fieldset>";
+      if (kind === "prosthesis") html += '<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
+      if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable) + bonusEditor(values.bonuses, true, false) + `<fieldset><legend>Granted abilities \xB7 available only while equipped</legend><div data-abilities>${(values.abilities || []).map(abilityRow).join("")}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
     }
     host.innerHTML = html;
     if (form.elements.weaponCategory && !existing.id) form.elements.weaponCategory.required = true;
-    for (const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"]')) input.min = "-999";
+    for (const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"],[name^="activeAttr:"],[name^="activeSkill:"]')) input.min = "-999";
     form.elements.quantity.closest("label").hidden = kind === "weapon" || kind === "magazine" && !!existing.id;
   }
   form.addEventListener("change", (e) => {
@@ -2277,7 +1859,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       dialog.scrollTop = scrollTop;
       return;
     }
-    if (["kind", "subtype", "weaponKind", "acceptsMagazines"].includes(e.target.name)) {
+    if (["kind", "subtype", "weaponKind", "acceptsMagazines", "artifactEffect"].includes(e.target.name)) {
       collect();
       render2();
     }
@@ -2351,7 +1933,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       collect();
-      if (["armor", "shield", "implant"].includes(values.kind) && !values.slots.length) {
+      if (["armor", "shield", "prosthesis"].includes(values.kind) && !values.slots.length) {
         host.querySelector("[data-equipment-slots]").insertAdjacentHTML("beforeend", '<p class="cp-muted">Choose at least one allowed slot.</p>');
         return;
       }
@@ -2428,7 +2010,7 @@ function sanitizeMagazine(weapon) {
   return {
     weaponCategory: normalizeWeaponCategory(weapon.weaponCategory),
     rangeReduction: normalizeRangeReduction(weapon.rangeReduction),
-    acceptsMagazines: weapon.acceptsMagazines !== false,
+    acceptsMagazines: false,
     ...Array.isArray(weapon.acceptedMagazineIds) ? { acceptedMagazineIds: [...new Set(weapon.acceptedMagazineIds.filter((id) => typeof id === "string"))].slice(0, 200) } : {},
     ammoIds: [...new Set(Array.isArray(weapon.ammoIds) ? weapon.ammoIds.filter((id) => typeof id === "string") : [])],
     capacity,
@@ -2440,7 +2022,7 @@ function reloadMagazine(avallon, weaponIndex, ammoId) {
   const weapon = avallon.weapons.ranged[weaponIndex];
   const ammo = avallon.ammunition.find((item) => item.id === ammoId);
   if (!weapon || !ammo || !weapon.ammoIds.includes(ammoId)) throw new Error("Choose compatible ammunition.");
-  if (weapon.capacity < 1) throw new Error("Set magazine capacity first.");
+  if (weapon.capacity < 1) throw new Error("Set internal capacity first.");
   if (ammo.quantity < 1) throw new Error("Ammo reserve is empty.");
   if (weapon.loadedAmmoId !== ammoId && weapon.loaded > 0) {
     const previous = avallon.ammunition.find((item) => item.id === weapon.loadedAmmoId);
@@ -2449,22 +2031,22 @@ function reloadMagazine(avallon, weaponIndex, ammoId) {
     previous.quantity += weapon.loaded;
     weapon.loaded = 0;
   }
-  const count = Math.min(weapon.capacity - weapon.loaded, ammo.quantity);
-  if (count <= 0) throw new Error("Magazine is full or ammo reserve is empty.");
+  const count2 = Math.min(weapon.capacity - weapon.loaded, ammo.quantity);
+  if (count2 <= 0) throw new Error("Internal capacity is full or ammo reserve is empty.");
   weapon.loadedAmmoId = ammoId;
-  weapon.loaded += count;
-  ammo.quantity -= count;
+  weapon.loaded += count2;
+  ammo.quantity -= count2;
 }
-function getAmmoShot(avallon, weaponIndex, ammoId, count) {
+function getAmmoShot(avallon, weaponIndex, ammoId, count2) {
   const weapon = avallon.weapons.ranged[weaponIndex];
   const ammo = avallon.ammunition.find((item) => item.id === ammoId);
   if (!weapon || !ammo || !weapon.ammoIds.includes(ammoId) || weapon.loadedAmmoId !== ammoId) {
     throw new Error("The selected ammunition must be loaded by the GM first.");
   }
-  if (!Number.isInteger(count) || count < 1 || count > weapon.loaded || count > weapon.capacity) {
-    throw new Error("Not enough rounds in the magazine.");
+  if (!Number.isInteger(count2) || count2 < 1 || count2 > weapon.loaded || count2 > weapon.capacity) {
+    throw new Error("Not enough rounds in the weapon.");
   }
-  return { ammoId, count, damage: ammo.damage * count, penetration: ammo.penetration, name: ammo.name };
+  return { ammoId, count: count2, damage: ammo.damage * count2, penetration: ammo.penetration, name: ammo.name };
 }
 function consumeAmmo(avallon, weaponIndex, shot) {
   getAmmoShot(avallon, weaponIndex, shot.ammoId, shot.count);
@@ -6183,18 +5765,12 @@ function instantiateTemplate(current2, template, sanitize) {
   const validated = normalizeLibrary({ ...emptyLibrary(), templates: [template] }, sanitize).templates[0];
   const data = structuredClone(validated.data);
   const ammoIds = new Map(data.avallon.ammunition.map((a) => [a.id, newId()]));
-  const magIds = new Map(data.avallon.inventory.magazines.map((m) => [m.id, newId()]));
   for (const a of data.avallon.ammunition) a.id = ammoIds.get(a.id);
-  for (const mag of data.avallon.inventory.magazines) {
-    mag.id = magIds.get(mag.id);
-    mag.loadedAmmoId = ammoIds.get(mag.loadedAmmoId) || "";
-  }
   for (const w of data.avallon.weapons.ranged) {
-    if (w.acceptedMagazineIds) w.acceptedMagazineIds = w.acceptedMagazineIds.map((id) => magIds.get(id)).filter(Boolean);
     w.id = newId();
     w.ammoIds = w.ammoIds.map((id) => ammoIds.get(id)).filter(Boolean);
     w.loadedAmmoId = ammoIds.get(w.loadedAmmoId) || "";
-    w.magazineId = magIds.get(w.magazineId) || "";
+    w.magazineId = "";
   }
   for (const w of data.avallon.weapons.melee) w.id = newId();
   for (const item of data.avallon.inventory.items) item.id = newId();
@@ -6267,7 +5843,7 @@ function installCharacterTools(host) {
   const refreshPool = (metadata, warning = poolWarning) => {
     poolMetadata = metadata || {};
     poolWarning = warning;
-    catalog = { ...poolEntries(poolMetadata), warning: [poolWarning, scanWarning].filter(Boolean).join(" ") };
+    catalog = { ...poolEntries(poolMetadata), entries: poolEntries(poolMetadata).entries.filter((e) => e.blueprint.type !== "magazine"), warning: [poolWarning, scanWarning].filter(Boolean).join(" ") };
     poolDialog?.refresh();
     render2();
   };
@@ -6279,7 +5855,7 @@ function installCharacterTools(host) {
   const putBlueprints = async (blueprints, automatic = false) => {
     await requirePoolGM();
     const metadata = await readPool(), patch = {};
-    let count = Object.entries(metadata).filter(([key, value]) => key.startsWith(ITEM_POOL_PREFIX) && value && !value.deleted).length;
+    let count2 = Object.entries(metadata).filter(([key, value]) => key.startsWith(ITEM_POOL_PREFIX) && value && !value.deleted).length;
     for (const blueprint of blueprints) {
       validateBlueprint(blueprint);
       const text2 = blueprintText(blueprint);
@@ -6291,7 +5867,7 @@ function installCharacterTools(host) {
       const key = ITEM_POOL_PREFIX + id;
       if (metadata[key] && (automatic || !metadata[key].deleted)) continue;
       if (Object.hasOwn(patch, key)) continue;
-      if ((!metadata[key] || metadata[key].deleted) && ++count > 2e3) throw new Error("Campaign item pool is full. Export a backup and remove unused definitions.");
+      if ((!metadata[key] || metadata[key].deleted) && ++count2 > 2e3) throw new Error("Campaign item pool is full. Export a backup and remove unused definitions.");
       patch[key] = { blueprint };
     }
     await requirePoolGM();
@@ -6414,17 +5990,17 @@ function installCharacterTools(host) {
     }
     const token = check();
     const tokenId = token.id, panel = node.closest("#selectedTokenPanel"), id = node.dataset.id;
-    const gmActions = ["add-item", "edit-item", "delete-item", "add-mag", "fill-mag", "set-mag-rounds", "empty-mag", "delete-mag", "mount-mag", "apply-template"];
+    const gmActions = ["add-item", "edit-item", "delete-item", "apply-template"];
     if (action === "open-item-pool") check(tokenId, true);
     if (gmActions.includes(action) || action.includes("template") || action.includes("library") || action.startsWith("account-")) check(tokenId, true);
     if (action === "activate-implant") {
       await host.activateAbility(tokenId, id, node.dataset.abilityId);
-      status("Implant bonuses activated.", "success");
+      status("Prosthesis bonuses activated.", "success");
       return;
     }
     if (action === "implant-attack") {
       host.selectImplantAttack(tokenId, node.dataset.key);
-      status("Implant attack selected. Choose a target in Attack.", "success");
+      status("Prosthesis attack selected. Choose a target in Attack.", "success");
       return;
     }
     if (action === "add-item" || action === "edit-entry") {
@@ -6611,38 +6187,7 @@ function installCharacterTools(host) {
       const part = readSelect(panel, "data-equip-part", id);
       await mutate(tokenId, (t) => equipItem(t, id, part, getRole() === "GM"));
     } else if (action === "unequip") await mutate(tokenId, (t) => unequipItem(t, id, getRole() === "GM"));
-    else if (action === "add-mag") {
-      const value = await formDialog("New magazine", [{ name: "name", label: "Name", required: true, value: "Magazine" }, { name: "capacity", label: "Capacity", type: "number", min: 1, max: 999, value: 6 }]);
-      if (!value) return;
-      const magazine = { id: newId(), name: value.name, capacity: Number(value.capacity), loaded: 0, loadedAmmoId: "" };
-      await mutate(tokenId, (t) => {
-        if (t.avallon.inventory.magazines.length >= 200) throw new Error("Magazine limit is 200.");
-        t.avallon.inventory.magazines.push(magazine);
-      }, true);
-    } else if (action === "set-mag-rounds") {
-      const tracker = host.tracker(check(tokenId, true)), o = tracker.avallon;
-      const mag = o.inventory.magazines.find((m) => m.id === id);
-      if (!mag) throw new Error("Magazine no longer exists.");
-      const weapon = o.weapons.ranged.find((w) => w.magazineId === id);
-      const ammo = o.ammunition.filter((a) => !weapon || Array.isArray(weapon.acceptedMagazineIds) || weapon.ammoIds.includes(a.id));
-      const value = await formDialog("GM \xB7 Set magazine rounds", [
-        { name: "rounds", label: "Rounds (0\u2013" + mag.capacity + ")", type: "number", min: 0, max: mag.capacity, value: mag.loaded, required: true },
-        { name: "ammoId", label: "Ammunition type", value: mag.loadedAmmoId, options: [["", "Empty / no ammunition"], ...ammo.map((a) => [a.id, a.name])] }
-      ], { message: "Direct GM correction. Ammunition reserve is not changed; this is not a reload." });
-      if (!value) return;
-      await mutate(tokenId, (t) => setMagazineRounds(t.avallon, id, Number(value.rounds), value.ammoId), true);
-    } else if (action === "fill-mag") {
-      const ammoId = readSelect(panel, "data-mag-ammo", id);
-      await mutate(tokenId, (t) => fillMagazine(t.avallon, id, ammoId), true);
-    } else if (action === "empty-mag") await mutate(tokenId, (t) => emptyMagazine(t.avallon, id), true);
-    else if (action === "delete-mag") await mutate(tokenId, (t) => {
-      emptyMagazine(t.avallon, id);
-      t.avallon.inventory.magazines = t.avallon.inventory.magazines.filter((m) => m.id !== id);
-    }, true);
-    else if (action === "mount-mag") {
-      const index = Number(node.dataset.index), magId = readSelect(panel, "data-weapon-mag", index);
-      await mutate(tokenId, (t) => swapMagazine(t.avallon, index, magId), true);
-    } else if (action === "save-template") {
+    else if (action === "save-template") {
       const value = await formDialog("Save character template", [{ name: "name", label: "Template name", required: true, value: token.name || "Character" }], { message: "Saves a healthy character. Owner, target, history and bridge events are excluded." });
       if (!value) return;
       if (storageError) throw new Error("Export the unreadable local library before importing a replacement. " + storageError);
@@ -6756,6 +6301,382 @@ function installCharacterTools(host) {
     const driver = vehicle?.pilotTokenId && getToken(vehicle.pilotTokenId), canExit = getRole() === "GM" || driver && canControl(driver);
     return '<div class="cp-screen cp-row od-vehicle"><span class="cp-section-title">Vehicle</span>' + (vehicle?.enabled ? vehicle.pilotTokenId ? '<span class="cp-pill">Driver: ' + esc(driver?.name || "Unavailable") + "</span>" + (canExit ? '<button type="button" data-od-action="vehicle-exit" title="Exit vehicle">Exit vehicle</button>' : "") : '<span class="cp-muted">No driver</span><button type="button" data-od-action="vehicle-enter" title="Enter vehicle">Enter vehicle</button>' : "") + (getRole() === "GM" ? '<button type="button" data-od-action="vehicle-toggle" title="' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + '">' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + "</button>" : "") + "</div>";
   }, syncPool: schedulePoolScan, isBusy: () => busy, renderInventory: (tracker) => disabledWhileBusy(inventoryView(tracker, getRole() === "GM")), renderTemplates: () => getRole() !== "GM" ? "" : disabledWhileBusy(`${storageError ? `<p class="cp-banner err">Local library could not be read: ${esc(storageError)}. Export JSON before replacing it.</p>` : ""}${templatesView(library, getRole() === "GM")}`) };
+}
+
+// ui/artifactTools.js
+function installArtifactTools(host) {
+  let busy = false;
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-artifact-action]");
+    if (!node || node.disabled || busy) return;
+    busy = true;
+    (async () => {
+      const token = host.getToken();
+      if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
+      const id = node.dataset.id, action = node.dataset.artifactAction;
+      const tracker = host.tracker(token), item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact");
+      if (!item) throw Error("Artifact no longer exists.");
+      let part = "";
+      if (action === "use" && item.artifactEffect === "heal") {
+        const choice = await formDialog("Use " + item.name, [{ name: "part", label: "Body part", options: Object.entries(tracker.body).filter(([, p]) => host.getRole() === "GM" || !p.hidden).map(([key, p]) => [key, p.label || key]) }], { submitLabel: "Use charges" });
+        if (!choice) return;
+        part = choice.part;
+      }
+      await host.update(token.id, (current2) => {
+        if (!host.canControl(host.getToken(token.id))) throw Error("Character unavailable.");
+        const next = structuredClone(current2), i = next.avallon.inventory.items.find((i2) => i2.id === id && i2.kind === "artifact");
+        if (!i || i.quantity < 1) throw Error("Artifact unavailable.");
+        if (action === "equip") i.equippedPart = "artifact";
+        else if (action === "unequip") {
+          i.equippedPart = "";
+          next.avallon.effects = next.avallon.effects.filter((e) => e.sourceItemId !== id);
+        } else if (action === "use") useArtifact(next, id, part);
+        return next;
+      });
+      host.status(action === "use" ? "Artifact used; charges spent." : "Artifact updated.", "success");
+    })().catch((e) => host.status(e.message, "error")).finally(() => {
+      busy = false;
+      host.render();
+    });
+  });
+}
+
+// fieldDrafts.js
+function createFieldDrafts() {
+  const tokens = /* @__PURE__ */ new Map();
+  let revision = 0;
+  return {
+    set(tokenId, key, value) {
+      if (!tokens.has(tokenId)) tokens.set(tokenId, /* @__PURE__ */ new Map());
+      const draft2 = { value, revision: ++revision };
+      tokens.get(tokenId).set(key, draft2);
+      return draft2;
+    },
+    get(tokenId, key) {
+      return tokens.get(tokenId)?.get(key);
+    },
+    finish(tokenId, key, draft2) {
+      const rows2 = tokens.get(tokenId);
+      if (rows2?.get(key) !== draft2) return;
+      rows2.delete(key);
+      if (!rows2.size) tokens.delete(tokenId);
+    },
+    clear(tokenId) {
+      tokens.delete(tokenId);
+    }
+  };
+}
+function createTokenWriteQueue() {
+  const pending = /* @__PURE__ */ new Map();
+  return (tokenId, write) => {
+    const task = (pending.get(tokenId) || Promise.resolve()).catch(() => {
+    }).then(write);
+    pending.set(tokenId, task);
+    const cleanup = () => {
+      if (pending.get(tokenId) === task) pending.delete(tokenId);
+    };
+    task.then(cleanup, cleanup);
+    return task;
+  };
+}
+
+// targetDistance.js
+function distanceLabel(cells, scale) {
+  if (!Number.isFinite(cells) || cells < 0) throw new Error("Distance is unavailable.");
+  const digits = Math.max(0, Math.min(5, Number(scale?.parsed?.digits) || 0)), multiplier = Number(scale?.parsed?.multiplier) || 1;
+  const format = (n2, d, min = 0) => Number(n2.toFixed(d)).toLocaleString("en-US", { minimumFractionDigits: min, maximumFractionDigits: d, useGrouping: false });
+  const unit = String(scale?.parsed?.unit || "");
+  return format(cells, 2) + " cells" + (unit ? " \xB7 " + format(cells * multiplier, digits, digits) + unit : "");
+}
+function createTargetDistance({ OBR: OBR2, buildRuler: buildRuler2, onRead, context = "main" }) {
+  const key = "com.avallon.system/target-distance", id = crypto.randomUUID();
+  let request = 0, generation = 0, timer = null, latest2 = null, added = false, chain = Promise.resolve(), scalePromise = null;
+  const cache = /* @__PURE__ */ new Map();
+  const initialize = OBR2.scene.local.getItems().then((items) => {
+    const ids = items.filter((i) => i.metadata?.[key] === context).map((i) => i.id);
+    if (ids.length) return OBR2.scene.local.deleteItems(ids);
+  }).catch(() => {
+  });
+  const center = async (target) => target.id ? (await OBR2.scene.items.getItemBounds([target.id])).center : target;
+  async function read(source, target) {
+    const cacheKey = JSON.stringify([source.id, source.position, source.scale, source.rotation, source.grid, source.image?.width, source.image?.height, target.id, target.position || target, target.scale, target.rotation, target.grid, target.image?.width, target.image?.height]);
+    if (!cache.has(cacheKey)) {
+      if (cache.size >= 32) cache.clear();
+      const promise = (async () => {
+        const [from, to, scale] = await Promise.all([center(source), center(target), scalePromise ?? (scalePromise = OBR2.scene.grid.getScale())]);
+        const cells = await OBR2.scene.grid.getDistance(from, to);
+        return { sourceId: source.id, targetId: target.id || "", from, to, cells, meters: distanceMeters(cells, scale), label: distanceLabel(cells, scale) };
+      })();
+      cache.set(cacheKey, promise);
+      promise.catch(() => {
+        if (cache.get(cacheKey) === promise) cache.delete(cacheKey);
+      });
+    }
+    return cache.get(cacheKey);
+  }
+  const publish = async (source, target, preview, epoch) => {
+    const current2 = ++request;
+    try {
+      const reading = await read(source, target);
+      if (epoch !== generation || current2 !== request) return preview ? null : reading;
+      onRead(reading);
+      if (preview) {
+        chain = chain.catch(() => {
+        }).then(async () => {
+          await initialize;
+          if (epoch !== generation || current2 !== request) return;
+          if (!added) {
+            const ruler = buildRuler2().id(id).name("Avallon target distance").startPosition(reading.from).endPosition(reading.to).measurement(reading.label).variant("DASHED").layer("RULER").locked(true).disableHit(true).metadata({ [key]: context }).build();
+            await OBR2.scene.local.addItems([ruler]);
+            added = true;
+          } else await OBR2.scene.local.updateItems([id], (items) => {
+            if (epoch === generation && current2 === request && items[0]) {
+              items[0].startPosition = reading.from;
+              items[0].endPosition = reading.to;
+              items[0].measurement = reading.label;
+            }
+          }, true);
+        });
+        await chain;
+      }
+      return reading;
+    } catch {
+      if (epoch === generation && current2 === request) onRead(null);
+      return null;
+    }
+  };
+  return {
+    preview(source, target) {
+      latest2 = { source, target };
+      if (timer) return;
+      const epoch = generation;
+      timer = setTimeout(() => {
+        timer = null;
+        const next = latest2;
+        if (next) void publish(next.source, next.target, true, epoch);
+      }, 80);
+    },
+    measure(source, target) {
+      return publish(source, target, false, generation);
+    },
+    invalidate() {
+      generation++;
+      request++;
+      cache.clear();
+      scalePromise = null;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (latest2) this.preview(latest2.source, latest2.target);
+    },
+    async clear() {
+      generation++;
+      request++;
+      latest2 = null;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      chain = chain.catch(() => {
+      }).then(async () => {
+        await initialize;
+        if (added) {
+          await OBR2.scene.local.deleteItems([id]);
+          added = false;
+        }
+      });
+      await chain.catch(() => {
+      });
+    }
+  };
+}
+
+// ui/combatLayout.js
+function arrangeCombatPanels(root = document) {
+  for (const panel of root.querySelectorAll("[data-combat-layout]:not([data-combat-arranged])")) {
+    panel.dataset.combatArranged = "true";
+    const kind = panel.dataset.combatLayout;
+    const grid = document.createElement("div");
+    grid.className = "od-combat-grid";
+    const cards = ["Weapon & skill", kind === "manual" ? "Manual defense" : "Target", "Action"].map((title) => {
+      const card = document.createElement("section");
+      card.className = "od-combat-card";
+      const heading = document.createElement("div");
+      heading.className = "od-combat-title";
+      heading.textContent = title;
+      card.append(heading);
+      grid.append(card);
+      return card;
+    });
+    for (const field of [...panel.querySelectorAll("label.field-stack")]) {
+      const control = field.querySelector("[data-attack-field],[data-manual-attack-field],input,select,button,[id],.combat-value");
+      const key = control?.dataset.attackField || control?.dataset.manualAttackField || control?.id || control?.dataset.action || "";
+      const isWeapon = ["skill", "weaponName", "weaponDamage", "ammoId", "rounds", "attackSourceName", "attackSkill", "weaponAccuracy"].includes(key) || field.querySelector("[data-weapon-accuracy-display]");
+      const isTarget = ["distanceMeters", "targetPart", "targetName", "targetTokenId", "pick-attack-target", "pickTargetBtn", "clearTargetBtn", "manualArmor", "manualParry"].includes(key) || field.querySelector(".combat-value:not([data-weapon-accuracy-display])");
+      cards[isWeapon ? 0 : isTarget ? 1 : 2].append(field);
+    }
+    for (const hidden of [...panel.querySelectorAll('input[type="hidden"]')]) cards[1].append(hidden);
+    for (const note of [...panel.querySelectorAll(".combat-notes")]) cards[2].append(note);
+    const notes = [...panel.querySelectorAll(":scope > .muted")];
+    if (notes.length) {
+      const details2 = document.createElement("details");
+      details2.className = "combat-notes";
+      const summary = document.createElement("summary");
+      summary.textContent = "Attack rules";
+      details2.append(summary, ...notes);
+      cards[2].append(details2);
+    }
+    const footer = document.createElement("div");
+    footer.className = "od-combat-footer";
+    const attack = panel.querySelector('[data-action="perform-attack"],[data-action="perform-manual-attack"],#environmentAttackBtn');
+    const pick = cards[1].querySelector('[data-action="pick-attack-target"],#pickTargetBtn');
+    const wide = (button, label) => {
+      button.classList.remove("od-icon-button");
+      button.classList.add("od-wide-action");
+      button.textContent = label;
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      footer.append(button);
+    };
+    if (attack) wide(attack, kind === "manual" ? "No Target Attack" : "Attack");
+    if (pick) {
+      const field = pick.closest("label");
+      wide(pick, /cancel/i.test(pick.textContent || pick.title) ? "Cancel Target Pick" : "Pick Target On Map");
+      field?.remove();
+    }
+    for (const obsolete of [...panel.querySelectorAll(":scope > .combat-action,:scope > .row")]) obsolete.remove();
+    for (const obsolete of [...panel.querySelectorAll(":scope > .combat-form-grid,:scope > .combat-modifiers")]) obsolete.remove();
+    panel.append(grid, footer);
+    panel.classList.add("od-combat-panel");
+  }
+}
+
+// ui/tooltips.js
+function installTooltips() {
+  const tip = document.createElement("div");
+  tip.className = "od-tooltip";
+  tip.id = "od-hover-tooltip";
+  tip.setAttribute("role", "tooltip");
+  tip.setAttribute("popover", "manual");
+  document.body.append(tip);
+  let active = null;
+  const hide = () => {
+    tip.classList.remove("visible");
+    active?.removeAttribute("aria-describedby");
+    active = null;
+  };
+  const show = (node) => {
+    hide();
+    const text2 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
+    if (!text2) return;
+    active = node;
+    tip.textContent = text2;
+    node.setAttribute("aria-describedby", tip.id);
+    const host = node.closest("dialog[open]") || document.body;
+    if (tip.matches(":popover-open")) tip.hidePopover();
+    if (tip.parentElement !== host) host.append(tip);
+    tip.showPopover();
+    const r = node.getBoundingClientRect();
+    tip.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
+    tip.style.top = Math.max(8, Math.min(r.bottom + 7, innerHeight - tip.offsetHeight - 8)) + "px";
+    requestAnimationFrame(() => {
+      if (active === node) tip.classList.add("visible");
+    });
+  };
+  document.addEventListener("pointerover", (e) => {
+    const node = e.target.closest?.("button,[data-tooltip]");
+    if (node && node !== active && !node.contains(e.relatedTarget)) show(node);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (active && !active.contains(e.relatedTarget)) hide();
+  });
+  document.addEventListener("focusin", (e) => {
+    const node = e.target.closest?.("button,[data-tooltip]");
+    if (node) show(node);
+  });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("pointerdown", hide);
+  document.addEventListener("scroll", hide, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hide();
+  });
+  new MutationObserver(() => {
+    if (active && !active.isConnected) hide();
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
+// ui/compactButtons.js
+var paths = {
+  info: "M12 11v6 M12 7h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
+  plus: "M12 5v14M5 12h14",
+  close: "m6 6 12 12M18 6 6 18",
+  edit: "m4 16-1 5 5-1L20 8l-4-4Z M14 6l4 4",
+  save: "M5 3h13l3 3v15H3V3Z M7 3v6h10V3 M7 21v-8h10v8",
+  refresh: "M20 7v5h-5M4 17v-5h5 M5 8a8 8 0 0 1 13-3l2 3 M19 16a8 8 0 0 1-13 3l-2-3",
+  target: "M12 2v4m0 12v4M2 12h4m12 0h4 M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0 M12 10v4m-2-2h4",
+  download: "M12 3v12m-5-5 5 5 5-5 M4 16v5h16v-5",
+  upload: "M12 16V4m-5 5 5-5 5 5 M4 16v5h16v-5",
+  cloud: "M6 18a4 4 0 0 1-1-8 7 7 0 0 1 13-1 5 5 0 0 1 0 9Z M12 10v8m-3-3 3 3 3-3",
+  shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z",
+  dice: "M4 4h16v16H4Z M8 8h.01 M16 8h.01 M12 12h.01 M8 16h.01 M16 16h.01",
+  attack: "m4 3 16 17m0-17L4 20 M3 15l6 6m6-18 6 6",
+  heal: "M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z",
+  book: "M3 4h7l2 2 2-2h7v15h-7l-2 2-2-2H3Z M12 6v15",
+  play: "m8 4 12 8-12 8Z",
+  box: "m3 7 9-4 9 4v13H3Z M3 7l9 4 9-4 M12 11v9",
+  window: "M3 3h18v18H3Z M3 8h18 M8 8v13",
+  copy: "M8 8h13v13H8Z M16 8V3H3v13h5"
+};
+function iconFor(text2) {
+  if (/description/i.test(text2)) return "info";
+  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text2)) return "close";
+  if (/edit|rename|set rounds|set magazine/i.test(text2)) return "edit";
+  if (/duplicate/i.test(text2)) return "copy";
+  if (/export|empty to|load from/i.test(text2)) return "download";
+  if (/import/i.test(text2)) return "upload";
+  if (/account/i.test(text2)) return "cloud";
+  if (/save/i.test(text2)) return "save";
+  if (/add|new|^\+/i.test(text2)) return "plus";
+  if (/reload|refresh|rebuild|fill|sync/i.test(text2)) return "refresh";
+  if (/select|pick|target|focus/i.test(text2)) return "target";
+  if (/roll|d100|dice/i.test(text2)) return "dice";
+  if (/attack|resolve/i.test(text2)) return "attack";
+  if (/heal|repair/i.test(text2)) return "heal";
+  if (/equip/i.test(text2)) return "shield";
+  if (/template/i.test(text2)) return "book";
+  if (/hud|window|open/i.test(text2)) return "window";
+  if (/use|apply/i.test(text2)) return "play";
+  return "box";
+}
+function installCompactButtons() {
+  installTooltips();
+  const enhance = () => {
+    for (const button of document.querySelectorAll("button")) {
+      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
+      const text2 = button.textContent.trim();
+      if (!text2 || text2.length <= 2) continue;
+      button.title = text2;
+      button.setAttribute("aria-label", text2);
+      button.classList.add("od-icon-button");
+      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text2)]}"></path></svg>`;
+    }
+  };
+  let scheduled = false;
+  new MutationObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      enhance();
+    });
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  enhance();
+}
+
+// ui/compactHud.js
+function compactHud({ token, tracker, floating, target, targetData, skills, weapons, draft: draft2, parts, ammunition }) {
+  return `<section class="od-hud cp-screen"><div class="cp-row"><div><span class="cp-section-title">Character</span><h3>${esc(token.name || "Character")}</h3></div><span class="cp-pill">${Object.entries(tracker.body).filter(([k]) => !["Shield", "Special"].includes(k)).reduce((n2, [, p]) => n2 + p.current, 0)} HP</span><button type="button" data-action="${floating ? "close-character-hud" : "open-character-hud"}" class="secondary">${floating ? "Close HUD" : "Floating HUD"}</button></div><div class="od-hud-grid"><div class="cp-card"><div class="cp-section-title">Weapon & skill</div><label>Weapon<select data-hud-attack-field="weaponName">${weapons}</select></label><label>Skill<select data-hud-attack-field="skill">${skills}</select></label>${ammunition.replaceAll("data-attack-field=", "data-hud-attack-field=")}</div><div class="cp-card"><div class="cp-section-title">Target</div><div class="cp-row"><b>${esc(target?.name || "No target selected")}</b><span data-target-distance class="od-target-distance"></span><span data-range-modifier="attack" class="od-range-readout cp-muted"></span><button type="button" data-action="pick-attack-target">Pick on map</button></div><label>Body zone<select data-hud-attack-field="targetPart">${parts.map(([key, label]) => `<option value="${esc(key)}" ${key === draft2.targetPart ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><p class="cp-muted">${targetData ? "Target selected \xB7 V1 armor, Parry and damage rules" : "Select a visible target to attack."}</p></div><div class="cp-card"><div class="cp-section-title">Action</div><label>Attack bonus<input type="number" value="${Number(draft2.attackBonuses) || 0}" data-hud-attack-field="attackBonuses"></label><label>Attack penalty<input type="number" value="${Number(draft2.attackPenalties) || 0}" data-hud-attack-field="attackPenalties"></label><button type="button" data-action="perform-attack" ${!target ? "disabled" : ""}>Attack</button></div></div><p class="cp-muted" role="status">${esc(tracker.lastRoll?.summary || "No rolls yet.")}</p></section>`;
 }
 
 // shared.js
@@ -7080,7 +7001,12 @@ function sanitizeAvallonData(raw) {
   next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
   next.weapons.ranged = sanitizeWeapons(raw.weapons?.ranged, true);
   next.ammunition = sanitizeAmmunition(raw.ammunition);
-  next.inventory = normalizeInventory(raw.inventory, next.weapons.ranged, "", next.skillLabels);
+  const mounted = new Set((raw.weapons?.ranged || []).map((w) => w.magazineId).filter(Boolean));
+  for (const m of raw.inventory?.magazines || []) if (!mounted.has(m.id)) {
+    const ammo = next.ammunition.find((a) => a.id === m.loadedAmmoId);
+    if (ammo) ammo.quantity = Math.min(999999, ammo.quantity + Math.max(0, Math.floor(Number(m.loaded) || 0)));
+  }
+  next.inventory = normalizeInventory({ ...raw.inventory, magazines: [] }, next.weapons.ranged, "", next.skillLabels);
   next.effects = normalizeEffects(raw.effects);
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
@@ -7671,9 +7597,9 @@ async function syncTrackedOverlays() {
 function rollPercent() {
   return Math.floor(Math.random() * 100) + 1;
 }
-function rollDice(sides, modifier2 = 0, count = 1) {
+function rollDice(sides, modifier2 = 0, count2 = 1) {
   const safeSides = clamp(Number(sides) || 0, 2, Number.MAX_SAFE_INTEGER);
-  const safeCount = clamp(Number(count) || 0, 1, 100);
+  const safeCount = clamp(Number(count2) || 0, 1, 100);
   const rolls = Array.from({ length: safeCount }, () => Math.floor(Math.random() * safeSides) + 1);
   const subtotal = rolls.reduce((sum, roll) => sum + roll, 0);
   return {
@@ -8050,7 +7976,8 @@ function getSkillStrengthBonusFlag(avallon, skillName) {
   return Boolean(avallon?.skillStrengthBonuses?.[skillName]);
 }
 function getSkillLabel(avallon, skillName) {
-  return String(avallon?.skillLabels?.[skillName] ?? skillName).trim() || skillName;
+  const ability = [...implantAttacks(avallon || {}), ...abilityAttacks(avallon || {})].find((w) => w.selectionKey === skillName);
+  return ability ? ability.name : String(avallon?.skillLabels?.[skillName] ?? skillName).trim() || skillName;
 }
 function getSortedSkillEntries(avallon) {
   return Object.entries(avallon?.skills ?? {}).sort(
@@ -8068,10 +7995,9 @@ function getAbilitiesSkillEntries(avallon) {
   );
 }
 function getAttackSkillEntries(avallon) {
-  const assigned = [...implantAttacks(avallon), ...abilityAttacks(avallon)].map((w) => resolveAbilitySkill(avallon, w.boundSkill)).filter(Boolean);
-  return [...new Map([...getCombatSkillEntries(avallon), ...getAbilitiesSkillEntries(avallon), ...assigned.map((key) => [key, avallon.skills[key]])]).entries()].filter(
-    ([skillName]) => !ATTACK_ONLY_EXCLUDED_SKILLS.has(skillName)
-  );
+  const attacks = [...implantAttacks(avallon), ...abilityAttacks(avallon)];
+  const assigned = attacks.map((w) => resolveAbilitySkill(avallon, w.boundSkill)).filter(Boolean);
+  return [...new Map([...getCombatSkillEntries(avallon), ...getAbilitiesSkillEntries(avallon), ...assigned.map((key) => [key, avallon.skills[key]])]).entries()].filter(([key]) => !ATTACK_ONLY_EXCLUDED_SKILLS.has(key)).concat(attacks.map((w) => [w.selectionKey, avallon.skills[resolveAbilitySkill(avallon, w.boundSkill)] || 0]));
 }
 function getAppliedSkillEntries(avallon) {
   return getSortedSkillEntries(avallon).filter(
@@ -8812,16 +8738,31 @@ function getWeaponByName(token, weaponName) {
   const weapons = getAttackSelectableWeapons(token);
   return weapons.find((weapon) => (weapon.selectionKey ?? weapon.name) === normalizedWeaponName) ?? getDefaultAttackWeapon(token);
 }
+function paintAbilityAttackFields() {
+  if (!activeTokenId) return;
+  const t = getCharacterById(activeTokenId);
+  if (!t) return;
+  for (const prefix of ["data-attack-field", "data-manual-attack-field", "data-hud-attack-field"]) {
+    const skill = ui.selectedTokenPanel.querySelector("[" + prefix + '="skill"]');
+    const ability = [...implantAttacks(getAvallonData2(t)), ...abilityAttacks(getAvallonData2(t))].find((w) => w.selectionKey === skill?.value);
+    const select = ui.selectedTokenPanel.querySelector("[" + prefix + '="weaponName"]');
+    if (select?.closest("label")) select.closest("label").hidden = !!ability;
+    const damage = ui.selectedTokenPanel.querySelector("[" + prefix + '="weaponDamage"]');
+    if (damage && ability) {
+      damage.value = ability.damage;
+      damage.disabled = true;
+    }
+  }
+}
 function syncAttackWeaponInputs(tokenId, weaponName, weaponDamage, weaponAccuracy = 0) {
   scheduleRender();
   if (!tokenId) return;
   const chosen = getWeaponByName(getCharacterById(tokenId), weaponName);
   if (chosen.implantId || chosen.magicAbilityId) {
-    const skill = resolveAbilitySkill(getAvallonData2(getCharacterById(tokenId)), chosen.boundSkill);
-    if (skill) {
-      saveAttackDraftValue(tokenId, "skill", skill);
-      ui.selectedTokenPanel.querySelectorAll('[data-attack-field="skill"],[data-manual-attack-field="skill"],[data-hud-attack-field="skill"]').forEach((field) => field.value = skill);
-    }
+    saveAttackDraftValue(tokenId, "skill", weaponName);
+  } else {
+    const stored = attackFormDrafts.get(tokenId);
+    if (stored?.skill?.startsWith("magic:") || stored?.skill?.startsWith("implant:")) saveAttackDraftValue(tokenId, "skill", getCombatSkillEntries(getAvallonData2(getCharacterById(tokenId)))[0]?.[0] || "Melee");
   }
   saveAttackDraftValue(tokenId, "weaponName", weaponName);
   saveAttackDraftValue(tokenId, "weaponDamage", String(weaponDamage));
@@ -9460,7 +9401,6 @@ async function saveWeapon(node) {
     const allWeapons = [...next.avallon.weapons.melee ?? [], ...next.avallon.weapons.ranged ?? []];
     if (allWeapons.some((item) => item !== weapon && item.name === name)) throw new Error("A weapon with this name already exists.");
     if (weapon && type !== nextType) {
-      if (type === "ranged" && weapon.magazineId) swapMagazine(next.avallon, index, "");
       if (type === "ranged" && weapon.loaded > 0) {
         const loadedAmmo = next.avallon.ammunition.find((ammo) => ammo.id === weapon.loadedAmmoId);
         if (loadedAmmo) loadedAmmo.quantity += weapon.loaded;
@@ -9535,20 +9475,13 @@ async function editAmmunition(action, node) {
     data.ammunition ?? (data.ammunition = []);
     const weapon = data.weapons.ranged[index];
     if (action === "ammo-remove") {
-      if (data.inventory.magazines.some((m) => m.loadedAmmoId === ammoId && m.loaded > 0)) throw new Error("Empty all magazines using this ammo first.");
       if (data.weapons.ranged.some((item) => item.loadedAmmoId === ammoId && item.loaded > 0)) throw new Error("Unload this ammunition before removing it.");
       data.ammunition = data.ammunition.filter((item) => item.id !== ammoId);
       for (const item of data.weapons.ranged) item.ammoIds = item.ammoIds.filter((id) => id !== ammoId);
     }
     if (action === "ammo-reload") {
-      if (weapon && !weapon.magazineId) {
-        const id = `reload-mag-${weapon.id}`;
-        if (!data.inventory.magazines.some((m) => m.id === id)) data.inventory.magazines.push({ id, name: weapon.name + " magazine", capacity: weapon.capacity, loaded: 0, loadedAmmoId: "" });
-        swapMagazine(data, index, id);
-      }
       reloadMagazine(data, index, reloadId);
     }
-    if (action === "ranged-remove" && weapon?.magazineId) swapMagazine(data, index, "");
     if ((action === "ranged-remove" || action === "ammo-unload") && weapon) {
       const loadedAmmo = data.ammunition.find((item) => item.id === weapon.loadedAmmoId);
       if (weapon.loaded && !loadedAmmo) throw new Error("Loaded ammunition is missing.");
@@ -9838,7 +9771,6 @@ function renderSelectedToken() {
             ${renderOwnerFields({ avallon }, gmOnlyDisabled)}
           ` : ""}
       ${characterTools ? characterTools.renderVehicle(token) : ""}
-      ${canUseToken(token) ? magicView(data, avallon, isEditable()) : ""}
       ${canUseToken(token) ? effectChips(avallon, isEditable()) : ""}
       ${canUseToken(token) ? renderCharacteristicsBlock({ avallon }) : ""}
       ${canUseToken(token) ? renderEnglishSkillsBlock({ avallon }, gmOnlyDisabled) : ""}
@@ -10397,7 +10329,6 @@ async function removeWeapon(type = "melee", index) {
     const next = structuredClone(current2);
     const weapons = next.avallon.weapons[type] ?? [];
     const weapon = weapons[index];
-    if (type === "ranged" && weapon?.magazineId) swapMagazine(next.avallon, index, "");
     if (type === "ranged" && weapon?.loaded > 0) {
       const ammo = next.avallon.ammunition.find(
         (item) => item.id === weapon.loadedAmmoId
@@ -10555,9 +10486,9 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   const targetData = target ? getTrackerData(target) : null;
   const targetAvallon = target ? getAvallonData2(target) : null;
   let skillName = manualDefense ? getActionFieldValue('[data-manual-attack-field="skill"]') || getActionFieldValue('[data-attack-field="skill"]') : getActionFieldValue('[data-attack-field="skill"]');
-  const weaponName = manualDefense ? getActionFieldValue('[data-manual-attack-field="weaponName"]') || getActionFieldValue('[data-attack-field="weaponName"]') : getActionFieldValue('[data-attack-field="weaponName"]');
+  const weaponName = skillName?.startsWith("magic:") || skillName?.startsWith("implant:") ? skillName : manualDefense ? getActionFieldValue('[data-manual-attack-field="weaponName"]') || getActionFieldValue('[data-attack-field="weaponName"]') : getActionFieldValue('[data-attack-field="weaponName"]');
   if (attackerAvallon.pilotMissing) throw Error("Vehicle driver is unavailable. Exit the vehicle or select another driver.");
-  if (weaponName?.startsWith("implant:") && !implantAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Implant attack is no longer equipped. Select a weapon.");
+  if (weaponName?.startsWith("implant:") && !implantAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Prosthesis attack is no longer equipped. Select a weapon.");
   if (weaponName?.startsWith("magic:") && !abilityAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Ability is no longer available. Select an attack.");
   const selectedWeapon = getWeaponByName(attacker, weaponName);
   if ((selectedWeapon.magicAbilityId || selectedWeapon.implantId) && manaStatus(getTrackerData(attacker).avallon).current < (selectedWeapon.cost || 0)) throw Error("Not enough mana.");
@@ -10701,7 +10632,7 @@ async function performAttackOnce({ manualDefense = false } = {}) {
     if (attackerAvallon.pilot?.id && next.avallon.vehicle?.pilotTokenId !== attackerAvallon.pilot.id) throw Error("Vehicle driver changed. Retry the attack.");
     if (selectedWeapon.implantId) {
       const ability = implantAttacks(next.avallon).find((w) => w.id === selectedWeapon.id);
-      if (!ability || ability.damage !== selectedWeapon.damage || ability.accuracy !== selectedWeapon.accuracy || ability.boundSkill !== selectedWeapon.boundSkill) throw Error("Implant attack changed. Retry the attack.");
+      if (!ability || ability.damage !== selectedWeapon.damage || ability.accuracy !== selectedWeapon.accuracy || ability.boundSkill !== selectedWeapon.boundSkill) throw Error("Prosthesis attack changed. Retry the attack.");
     }
     if (selectedWeapon.magicAbilityId) {
       const ability = abilityAttacks(next.avallon).find((w) => w.id === selectedWeapon.id);
@@ -10810,9 +10741,9 @@ async function performRollDice() {
     return;
   }
   const dice = Number(getActionFieldValue('[data-roll-field="dice"]')) || 20;
-  const count = Number(getActionFieldValue('[data-roll-field="count"]')) || 1;
+  const count2 = Number(getActionFieldValue('[data-roll-field="count"]')) || 1;
   const modifier2 = Number(getActionFieldValue('[data-roll-field="modifier"]')) || 0;
-  const result = rollDice(dice, modifier2, count);
+  const result = rollDice(dice, modifier2, count2);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   await updateTrackerData2(token.id, (current2) => {
@@ -11076,9 +11007,9 @@ async function performPrivateGmRoll() {
     return;
   }
   const dice = Number(getActionFieldValue('[data-gm-roll-field="dice"]')) || 20;
-  const count = Number(getActionFieldValue('[data-gm-roll-field="count"]')) || 1;
+  const count2 = Number(getActionFieldValue('[data-gm-roll-field="count"]')) || 1;
   const modifier2 = Number(getActionFieldValue('[data-gm-roll-field="modifier"]')) || 0;
-  const result = rollDice(dice, modifier2, count);
+  const result = rollDice(dice, modifier2, count2);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   pushPrivateGmEntry(
@@ -11423,6 +11354,20 @@ function bindUiEvents() {
       });
       return;
     }
+    if (activeTokenId && (target.dataset.attackField === "skill" || target.dataset.manualAttackField === "skill")) {
+      saveAttackDraftValue(activeTokenId, "skill", target.value);
+      const token = getCharacterById(activeTokenId), ability = [...implantAttacks(getAvallonData2(token)), ...abilityAttacks(getAvallonData2(token))].find((w) => w.selectionKey === target.value);
+      if (ability) syncAttackWeaponInputs(activeTokenId, ability.selectionKey, ability.damage, ability.accuracy);
+      else {
+        const stored = attackFormDrafts.get(activeTokenId);
+        if (stored?.weaponName?.startsWith("magic:") || stored?.weaponName?.startsWith("implant:")) {
+          const w = getDefaultAttackWeapon(token);
+          syncAttackWeaponInputs(activeTokenId, w.name, w.damage, w.accuracy);
+        }
+      }
+      scheduleRender();
+      return;
+    }
     if (target.dataset.attackField && activeTokenId) {
       if (target.dataset.attackField === "weaponName") {
         const token = getCharacterById(activeTokenId);
@@ -11676,8 +11621,7 @@ lib_default.onReady(async () => {
       selectImplantAttack: (tokenId, key) => {
         const token = getCharacterById(tokenId), weapon = getWeaponByName(token, key);
         syncAttackWeaponInputs(tokenId, key, weapon.damage, weapon.accuracy);
-        const skill = resolveAbilitySkill(getAvallonData2(token), weapon.boundSkill);
-        if (skill) saveAttackDraftValue(tokenId, "skill", skill);
+        saveAttackDraftValue(tokenId, "skill", key);
         scheduleRender();
       },
       useItem: useCharacterItem,
@@ -11708,6 +11652,8 @@ lib_default.onReady(async () => {
     window.addEventListener("beforeunload", () => {
       void targetDistance.clear();
     });
+    new MutationObserver(() => paintAbilityAttackFields()).observe(ui.selectedTokenPanel, { childList: true, subtree: true });
+    installArtifactTools({ getToken: (id) => getCharacterById(id ?? activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, update: updateTrackerData2, render: scheduleRender, status: setStatus });
     installMagicTools({ getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
       const t = getCharacterById(id), w = getWeaponByName(t, key);
       syncAttackWeaponInputs(id, key, w.damage, w.accuracy);
