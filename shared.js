@@ -1,5 +1,5 @@
 import {normalizeStatuses} from './statusRules.js';
-import {SKILL_CATEGORIES,skillCap,normalizeSkillCategory} from './avallonConfig.js';
+import {SKILL_CATEGORIES,skillCap,attributeCap,normalizeSkillCategory} from './avallonConfig.js';
 import {normalizeAbilities,normalizeMana} from './magicRules.js';
 import { normalizeEffects, effectiveAvallon, reconcileEquipment, setCombinedPartHp, setCombinedPartMax, ARMOR_TRAINING } from "./characterRules.js";
 import { normalizeInventory } from "./inventory.js";
@@ -351,7 +351,7 @@ export function sanitizeAvallonData(raw) {
       key === "Magic"
         ? raw.attributes?.[key] ?? raw.attributes?.Psionics ?? 0
         : raw.attributes?.[key] ?? 8;
-    next.attributes[key] = clamp(Number(fallbackValue ?? (key==="Magic"?0:8)) || 0, 0, 15);
+    next.attributes[key] = clamp(Number(fallbackValue ?? (key==="Magic"?0:8)) || 0, 0, attributeCap(key));
   }
 
   next.skillRangeReduction={};next.skillDescriptions={};next.skillPerkDescriptions={};

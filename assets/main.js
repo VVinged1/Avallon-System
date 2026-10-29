@@ -444,6 +444,7 @@ function addNarrativeStatus(tracker, status) {
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
 var skillCap = () => 10;
+var attributeCap = (key) => key === "Magic" ? 20 : 15;
 var normalizeSkillCategory = (value) => SKILL_CATEGORIES.some(([key]) => key === value) ? value : "applied";
 
 // rangeRules.js
@@ -1033,7 +1034,7 @@ var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entrie
 function attributeCards(o, fields, editable) {
   return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
     const delta = o.modifiers?.attributes?.[k] || 0;
-    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
+    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="${attributeCap(k)}" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
   }).join("")}</div></div>`;
 }
 function skillCards(o, groups, editable) {
@@ -7205,7 +7206,7 @@ function sanitizeAvallonData(raw) {
   }
   for (const key of Object.keys(next.attributes)) {
     const fallbackValue = key === "Magic" ? raw.attributes?.[key] ?? raw.attributes?.Psionics ?? 0 : raw.attributes?.[key] ?? 8;
-    next.attributes[key] = clamp(Number(fallbackValue ?? (key === "Magic" ? 0 : 8)) || 0, 0, 15);
+    next.attributes[key] = clamp(Number(fallbackValue ?? (key === "Magic" ? 0 : 8)) || 0, 0, attributeCap(key));
   }
   next.skillRangeReduction = {};
   next.skillDescriptions = {};
@@ -10386,7 +10387,7 @@ async function setAvallonAttribute(attribute, value) {
   }
   await updateTrackerData2(token.id, (current2) => {
     const next = structuredClone(current2);
-    next.avallon.attributes[attribute] = clamp(Number(value) || 0, 0, 15);
+    next.avallon.attributes[attribute] = clamp(Number(value) || 0, 0, attributeCap(attribute));
     return next;
   });
 }
@@ -10571,7 +10572,7 @@ async function autosaveDraftField(draft2) {
     }
     if (draft2.action === "set-avallon-attribute") {
       if (!isEditable()) return next;
-      next.avallon.attributes[draft2.attribute] = clamp(Number(draft2.value) || 0, 0, 15);
+      next.avallon.attributes[draft2.attribute] = clamp(Number(draft2.value) || 0, 0, attributeCap(draft2.attribute));
       return next;
     }
     if (draft2.action === "set-weapon-damage") {

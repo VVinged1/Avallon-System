@@ -604,6 +604,7 @@ function installCompactButtons() {
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
 var skillCap = () => 10;
+var attributeCap = (key) => key === "Magic" ? 20 : 15;
 var normalizeSkillCategory = (value) => SKILL_CATEGORIES.some(([key]) => key === value) ? value : "applied";
 
 // rangeRules.js
@@ -4564,7 +4565,7 @@ function sanitizeAvallonData(raw) {
   }
   for (const key of Object.keys(next.attributes)) {
     const fallbackValue = key === "Magic" ? raw.attributes?.[key] ?? raw.attributes?.Psionics ?? 0 : raw.attributes?.[key] ?? 8;
-    next.attributes[key] = clamp(Number(fallbackValue ?? (key === "Magic" ? 0 : 8)) || 0, 0, 15);
+    next.attributes[key] = clamp(Number(fallbackValue ?? (key === "Magic" ? 0 : 8)) || 0, 0, attributeCap(key));
   }
   next.skillRangeReduction = {};
   next.skillDescriptions = {};

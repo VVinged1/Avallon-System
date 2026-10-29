@@ -1,7 +1,7 @@
 import {createLogEntry,publishLogEntry,persistLogEntries} from './sharedLog.js';
 import {applyNarrativeAbility} from './narrativeUse.js';
 import {statusView,installStatusTools} from './ui/statusTools.js';
-import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
+import {SKILL_CATEGORIES,skillCap,attributeCap} from './avallonConfig.js';
 import {manaStatus,spendMana,abilityAttacks,activateAbility} from './magicRules.js';
 import {installArtifactTools} from './ui/artifactTools.js';
 import {installMagicTools} from './ui/magicTools.js';
@@ -3904,7 +3904,7 @@ async function setAvallonAttribute(attribute, value) {
 
   await updateTrackerData(token.id, (current) => {
     const next = structuredClone(current);
-    next.avallon.attributes[attribute] = clamp(Number(value) || 0, 0, 15);
+    next.avallon.attributes[attribute] = clamp(Number(value) || 0, 0, attributeCap(attribute));
     return next;
   });
 }
@@ -4116,7 +4116,7 @@ async function autosaveDraftField(draft) {
 
     if (draft.action === "set-avallon-attribute") {
       if (!isEditable()) return next;
-      next.avallon.attributes[draft.attribute] = clamp(Number(draft.value) || 0, 0, 15);
+      next.avallon.attributes[draft.attribute] = clamp(Number(draft.value) || 0, 0, attributeCap(draft.attribute));
       return next;
     }
 

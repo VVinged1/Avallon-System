@@ -1,6 +1,6 @@
 import {manaStatus} from '../magicRules.js';
 import {abilityRows,manaRow} from './magicTools.js';
-import {skillCap} from '../avallonConfig.js';
+import {skillCap,attributeCap} from '../avallonConfig.js';
 import {groupNamedItems} from '../itemGroups.js';
 import {activeImplantAbilities} from '../implantAbilities.js';
 import {descriptionButton} from './descriptions.js';
@@ -10,7 +10,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 export {esc};
 const bonusText=b=>[...Object.entries(b?.attributes||{}),...Object.entries(b?.skills||{}),...RANGE_BANDS.filter(([key])=>b?.rangeReduction?.[key]).map(([key,label])=>[label.split(' · ')[0]+' relief',b.rangeReduction[key]])].map(([k,v])=>`${k} ${v>0?'+':''}${v}`).join(' · ');
 export function attributeCards(o,fields,editable) {
-  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k,label])=>{const delta=o.modifiers?.attributes?.[k]||0;return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k]??0}</span><span class="cp-attr-code">${esc(label)}</span>${delta?`<span class="cp-mod ${delta>0?'good':'bad'}">${delta>0?'+':''}${delta}</span>`:''}</button>${editable?`<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k]??o.attributes[k]??0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>`:''}</div>`;}).join('')}</div></div>`;
+  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k,label])=>{const delta=o.modifiers?.attributes?.[k]||0;return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k]??0}</span><span class="cp-attr-code">${esc(label)}</span>${delta?`<span class="cp-mod ${delta>0?'good':'bad'}">${delta>0?'+':''}${delta}</span>`:''}</button>${editable?`<label class="cp-edit-value">Base <input type="number" min="0" max="${attributeCap(k)}" value="${o.baseAttributes?.[k]??o.attributes[k]??0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>`:''}</div>`;}).join('')}</div></div>`;
 }
 export function skillCards(o,groups,editable) {
  const passives=Object.entries(ARMOR_TRAINING).filter(([k])=>Object.hasOwn(o.skills,k)&&(editable||o.skills[k]===1));
