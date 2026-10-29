@@ -1,0 +1,26 @@
+{
+  "name": "avallon-system",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node ammunition.test.mjs && node scripts/fieldDrafts.test.mjs && node scripts/campaignPoolStore.test.mjs && node scripts/avallon.test.mjs",
+    "test:ui": "node scripts/avallon.browser.test.mjs && node scripts/editor-layout.browser.test.mjs && node scripts/concurrency.test.mjs && node scripts/poolPersistence.test.mjs",
+    "package:site": "node scripts/package-site.mjs"
+  },
+  "dependencies": {
+    "@owlbear-rodeo/sdk": "3.1.0",
+    "@emotion/react": "11.10.4",
+    "@emotion/styled": "11.10.4",
+    "@mui/icons-material": "5.10.6",
+    "@mui/material": "5.10.7",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "playwright": "1.56.1"
+  },
+  "version": "1.0.0",
+  "license": "GPL-3.0-only"
+}

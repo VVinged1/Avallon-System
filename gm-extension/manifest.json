@@ -1,0 +1,15 @@
+{
+  "name": "Avallon GM Tools",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "Avallon GM Tools for Owlbear Rodeo",
+  "author": "Codex",
+  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.0.0",
+  "action": {
+    "title": "Avallon GM Tools",
+    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.0.0",
+    "popover": "https://vvinged1.github.io/Avallon-System/gm-extension/index.html?v=1.0.0",
+    "height": 1200,
+    "width": 1200
+  }
+}

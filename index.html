@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avallon Combat Console</title>
+    <link rel="stylesheet" href="./styles.css?v=1.0.0" />
+    <link rel="stylesheet" href="./ui/combatLayout.css?v=1.0.0" />
+  <link rel="stylesheet" href="./theme.css?v=1.0.0" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <h1>Avallon Combat Console</h1>
+          <p class="sub">
+            Select an attacker token, choose a target token, and resolve combat here.
+          </p>
+        </div>
+        <div id="roleBadge" class="role-badge">...</div>
+      </header>
+
+      <section class="panel actions-panel">
+        <div class="row row-gap">
+          <button id="refreshBtn" type="button">Refresh</button>
+          <button id="syncBtn" type="button">Rebuild Overlays</button>
+        </div>
+        <p id="statusBox" class="status info">Loading extension...</p>
+        <p class="muted panel-note">Public combat log is available in the Avallon Combat Log extension.</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div class="section-title">Selected Character</div>
+          <div id="selectionHint" class="muted">Nothing selected</div>
+        </div>
+        <div id="selectedTokenPanel"></div>
+      </section>
+
+      <section class="panel" hidden>
+        <details class="collapsible-block" data-section-key="global:debug-console" open>
+          <summary class="collapsible-title">Debug Console</summary>
+          <div class="collapsible-body">
+            <div class="row row-gap">
+              <div class="muted">Last rolls and full combat tables</div>
+              <button id="clearDebugBtn" type="button" class="secondary hidden" data-action="clear-debug-console">Clear Console</button>
+            </div>
+            <div id="debugConsole"></div>
+          </div>
+        </details>
+      </section>
+
+
+
+
+    </div>
+
+    <button type="button" class="action-resize-handle" data-action-resize title="Resize window" aria-label="Resize window"></button>
+
+    <script type="module" src="./assets/main.js?v=1.0.0"></script>
+  </body>
+</html>

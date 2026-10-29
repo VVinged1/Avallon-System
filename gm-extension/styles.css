@@ -1,0 +1,430 @@
+:root {
+  color-scheme: dark;
+  --bg: #191611;
+  --panel: #27201a;
+  --line: #69513a;
+  --text: #f2e5ce;
+  --muted: #c1ae91;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(180deg, #211914 0%, #15120f 100%);
+  color: var(--text);
+}
+
+body {
+  min-height: 100vh;
+}
+
+#app {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 380px;
+}
+
+.panel {
+  background: rgba(39, 32, 26, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.actions-panel {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
+
+.role-badge,
+.status,
+.hint-box {
+  border-radius: 999px;
+}
+
+.role-badge {
+  padding: 6px 10px;
+  background: #783f40;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+}
+
+.row-gap {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #36558f;
+  background: #22365c;
+  color: white;
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button.secondary {
+  background: #172235;
+  border-color: #45556f;
+}
+
+button.success {
+  background: #14532d;
+  border-color: #166534;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input,
+select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(7, 16, 31, 0.78);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.status {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+
+.status.info {
+  background: #163152;
+  border-color: #264b7b;
+}
+
+.status.success {
+  background: #123b26;
+  border-color: #1c6a42;
+}
+
+.status.error {
+  background: #4a1822;
+  border-color: #8a263d;
+}
+
+.collapsible-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(7, 16, 31, 0.66);
+  overflow: hidden;
+}
+
+.collapsible-title {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(21, 33, 61, 0.9);
+  border-bottom: 1px solid transparent;
+}
+
+.collapsible-title::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-title::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.collapsible-block[open] .collapsible-title {
+  border-bottom-color: var(--line);
+}
+
+.collapsible-block[open] .collapsible-title::after {
+  content: "-";
+}
+
+.collapsible-body {
+  padding: 12px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.checkbox-field {
+  justify-content: end;
+}
+
+.roll-visibility-action {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.roll-visibility-action button {
+  min-width: 0;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--text);
+}
+
+.checkbox-inline input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.visibility-eye {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #36558f;
+  border-radius: 6px;
+  background: #172235;
+  cursor: pointer;
+}
+
+.visibility-eye input {
+  position: absolute;
+  opacity: 0;
+}
+
+.visibility-eye span {
+  width: 18px;
+  height: 11px;
+  border: 1.5px solid #93c5fd;
+  border-radius: 50%;
+  opacity: 0.35;
+  position: relative;
+}
+
+.visibility-eye span::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  top: 1.5px;
+  left: 5px;
+  border-radius: 50%;
+  background: #93c5fd;
+}
+
+.visibility-eye input:checked + span {
+  opacity: 1;
+}
+
+.visibility-eye input:focus-visible + span {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 3px;
+}
+
+.hint-box {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(7, 16, 31, 0.78);
+  color: var(--text);
+  padding: 8px 12px;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+
+.combat-form-grid,
+.combat-modifiers {
+  display: grid;
+  gap: 10px;
+}
+
+.combat-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.combat-modifiers {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(7, 16, 31, 0.42);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.private-roll-log {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 10px;
+}
+
+.debug-entry {
+  background: rgba(7, 16, 31, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.debug-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.debug-title {
+  font-weight: 700;
+}
+
+.console-output {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.action-resize-handle {
+  position: fixed;
+  right: 3px;
+  bottom: 3px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-right: 2px solid rgba(147, 197, 253, 0.7);
+  border-bottom: 2px solid rgba(147, 197, 253, 0.7);
+  border-radius: 0;
+  background: transparent;
+  cursor: nwse-resize;
+  opacity: 0.7;
+  z-index: 20;
+}
+
+.action-resize-handle:hover {
+  opacity: 1;
+}
+
+@media (max-width: 640px) {
+  html,
+  body {
+    min-width: 0;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .combat-form-grid,
+  .combat-modifiers {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    flex-direction: column;
+  }
+}
+
+/* V2-style GM panels, keeping all V1 public/private and environment actions. */
+.avallon-gm { --line:#29415f; --panel:#101d30; --accent:#3ea6ff; }
+.avallon-gm .panel { border-radius:12px; background:rgba(16,29,48,.94); }
+.avallon-gm .section-title { text-transform:uppercase; letter-spacing:.05em; font-size:12px; color:#c1ae91; }
+.avallon-gm input, .avallon-gm select { border-radius:8px; background:rgba(8,17,28,.9); }
+.avallon-gm button { border-radius:8px; }
+.avallon-gm button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+/* Keep the invisible checkbox inside its eye control, not over adjacent buttons. */
+.avallon-gm .visibility-eye { position:relative; flex:none; }
+.avallon-gm .visibility-eye input { inset:0; width:100%; height:100%; margin:0; padding:0; z-index:1; cursor:pointer; }
+.avallon-gm .visibility-eye span { pointer-events:none; }
+.avallon-gm #privateLog { max-height:360px; overflow:auto; margin-top:10px; }
+#gmRosters .cp-list{display:grid;gap:6px;padding-top:8px}#gmRosters .cp-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}#gmRosters .cp-card{padding:8px;border:1px solid var(--line);border-radius:8px}#gmRosters .cp-pill,#gmRosters .cp-muted{font-size:11px;color:var(--muted)}
+.od-icon-button{display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 auto!important;width:28px!important;height:28px!important;min-width:28px!important;min-height:28px!important;max-width:28px!important;padding:5px!important;border-radius:6px!important;vertical-align:middle}.od-icon-button svg{display:block;width:17px;height:17px;pointer-events:none}.od-icon-button:focus-visible{outline:2px solid #b49bf0;outline-offset:2px}

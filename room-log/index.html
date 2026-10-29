@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avallon Combat Log</title>
+    <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="../theme.css?v=1.0.0" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="hero block-shell">
+        <details class="block-toggle" open>
+          <summary class="block-summary">
+            <div class="block-summary-copy">
+              <p class="eyebrow">Avallon System</p>
+              <h1>Combat Log</h1>
+            </div>
+            <span class="block-summary-pill">Overview</span>
+          </summary>
+          <div class="block-content">
+            <p class="hero-sub">
+              Dedicated live log viewer for room-wide attacks, rolls, and debug combat tables.
+            </p>
+          </div>
+        </details>
+      </header>
+
+      <section class="log-shell block-shell">
+        <details class="block-toggle" open>
+          <summary class="block-summary">
+            <div class="block-summary-copy">
+              <p class="section-kicker">Room Feed</p>
+              <h2>Recent Events</h2>
+            </div>
+            <span id="entryCount" class="entry-count">0 entries</span>
+          </summary>
+          <div class="block-content">
+            <div id="emptyState" class="empty-state">
+              <p id="emptyTitle" class="empty-title">No combat entries yet</p>
+              <p id="emptyBody" class="empty-body">
+                As soon as the main Avallon extension rolls attacks or checks, the shared room log will
+                appear here.
+              </p>
+            </div>
+
+            <div id="logEntries" class="log-entries"></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="status-card block-shell">
+        <details class="block-toggle" open>
+          <summary class="block-summary">
+            <div class="block-summary-copy">
+              <p class="section-kicker">Connection</p>
+              <h2>Status</h2>
+            </div>
+            <span id="liveBadge" class="live-badge">Waiting</span>
+          </summary>
+          <div class="block-content">
+            <p id="statusBox" class="status-text">Connecting to room log...</p>
+            <div class="meta-grid">
+              <div class="meta-cell"><span class="meta-label">Viewer</span><span id="viewerName" class="meta-value">Loading...</span></div>
+              <div class="meta-cell"><span class="meta-label">Role</span><span id="viewerRole" class="meta-value">...</span></div>
+              <div class="meta-cell meta-cell-wide"><span class="meta-label">Last Sync</span><span id="lastSync" class="meta-value">Not synced yet</span></div>
+            </div>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <button type="button" class="action-resize-handle" id="resizeHandle" title="Resize window" aria-label="Resize window"></button>
+
+    <script type="module" src="./assets/main.js?v=1.0.0"></script>
+  </body>
+</html>

@@ -1,0 +1,1346 @@
+import {SKILL_CATEGORIES,skillCap,normalizeSkillCategory} from './avallonConfig.js';
+import {normalizeAbilities,normalizeMana} from './magicRules.js';
+import { normalizeEffects, effectiveAvallon, reconcileEquipment, setCombinedPartHp, setCombinedPartMax, ARMOR_TRAINING } from "./characterRules.js";
+import { normalizeInventory } from "./inventory.js";
+import OBR, { Command, buildPath, isImage } from "@owlbear-rodeo/sdk";
+import { sanitizeAmmunition, sanitizeMagazine } from "./ammunition.js";
+
+export { OBR };
+
+export const EXTENSION_ID = "com.avallon.system";
+export const META_KEY = `${EXTENSION_ID}/data`;
+export const OVERLAY_KEY = `${EXTENSION_ID}/overlayFor`;
+export const SHIELD_PART_NAME = "Shield";
+export const SPECIAL_PART_NAME = "Special";
+const BODY_TOTAL_ORDER = ["Head", "L.Arm", "R.Arm", "Torso", "L.Leg", "R.Leg"];
+export const BODY_ORDER = [...BODY_TOTAL_ORDER, SHIELD_PART_NAME, SPECIAL_PART_NAME];
+export const BODY_PART_SLOTS = ["head", "left-arm", "right-arm", "left-leg", "right-leg", "other"];
+export const BODY_PART_SLOT_LABELS = {
+  head: "Head",
+  "left-arm": "Left Arm",
+  "right-arm": "Right Arm",
+  "left-leg": "Left Leg",
+  "right-leg": "Right Leg",
+  other: "Other",
+};
+const BODY_SLOT_BY_PART = {
+  Head: "head",
+  "L.Arm": "left-arm",
+  "R.Arm": "right-arm",
+  "L.Leg": "left-leg",
+  "R.Leg": "right-leg",
+  Torso: "torso",
+};
+const BODY_SLOT_LAYOUT = [
+  { slot: "head", angle: -90 },
+  { slot: "right-arm", angle: -18 },
+  { slot: "right-leg", angle: 54 },
+  { slot: "left-leg", angle: 126 },
+  { slot: "left-arm", angle: 198 },
+];
+export const ROLL_HISTORY_LIMIT = 12;
+export const COMBAT_SKILL_CATEGORY = "combat";
+export const APPLIED_SKILL_CATEGORY = "applied";
+export const ABILITIES_SKILL_CATEGORY = "abilities";
+export const MELEE_SKILL_NAME = "Melee";
+export const PARRY_SKILL_NAME = "Parry";
+const LEGACY_MELEE_SKILL_NAMES = new Set(["Hand", "Cold", "\u0420\u0443\u043A\u043E\u043F\u0430\u0448\u043D\u044B\u0439"]);
+const LEGACY_REMOVED_SKILLS = new Set(["Hand", "Cold", "Throwing", "Rifle", "Turrets"]);
+const VISUAL_VERSION = 18;
+const SPECIAL_RING_COLOR = "#57D8FF";
+const HP_COLOR_STOPS = [
+  { ratio: 1, color: "#73FF5A" },
+  { ratio: 0.75, color: "#FFF243" },
+  { ratio: 0.5, color: "#FFAF22" },
+  { ratio: 0.25, color: "#AC0004" },
+  { ratio: 0, color: "#000000" },
+];
+const RING_COLORS = {
+  base: "#000000",
+  border: "#050505",
+};
+const OVERLAY_STROKE_WIDTH = 0.75;
+const overlayEnsureQueue = new Map();
+const OVERLAY_UPDATE_DELAY_MS = 75;
+let cachedGridDpi = null;
+export const DEFAULT_AVALLON_SKILLS = {
+  [MELEE_SKILL_NAME]: 0,
+  [PARRY_SKILL_NAME]: 0,
+};
+export const DEFAULT_AVALLON_SKILL_CATEGORIES = {
+  [MELEE_SKILL_NAME]: COMBAT_SKILL_CATEGORY,
+  [PARRY_SKILL_NAME]: COMBAT_SKILL_CATEGORY,
+};
+export const DEFAULT_AVALLON_SKILL_STRENGTH_BONUSES = {
+  [MELEE_SKILL_NAME]: true,
+  [PARRY_SKILL_NAME]: false,
+};
+
+export const BODY_DEFAULTS = {
+  Torso: { current: 3, max: 3, armor: 6, minor: 0, serious: 0, slot: "torso", attackPenalty: 0, hidden: false, label: "Torso" },
+  [SHIELD_PART_NAME]: { current: 0, max: 0, armor: 0, minor: 0, serious: 0 },
+  [SPECIAL_PART_NAME]: { current: 0, max: 0, armor: 0, minor: 0, serious: 0 },
+};
+
+export const DEFAULT_TRACKER_DATA = {
+  enabled: true,
+  minor: 0,
+  serious: 0,
+  body: structuredClone(BODY_DEFAULTS),
+  identity: {
+    playerId: "",
+    characterId: "",
+  },
+  lastRoll: null,
+  history: [],
+  sync: {
+    lastEventId: 0,
+    lastSyncedAt: null,
+  },
+  avallon: {
+    owner: {
+      playerId: "",
+      playerName: "",
+    },
+    attackDraft: {
+      targetTokenId: "",
+      targetTokenName: "",
+    },
+    skills: structuredClone(DEFAULT_AVALLON_SKILLS),
+    skillCategories: structuredClone(DEFAULT_AVALLON_SKILL_CATEGORIES),
+    skillStrengthBonuses: structuredClone(DEFAULT_AVALLON_SKILL_STRENGTH_BONUSES),
+    skillLabels: {},
+    skillPerks: {},
+    skillDescriptions: {},
+    skillPerkDescriptions: {},
+    skillRangeReduction: {},
+    attributes: {
+      Strength: 8,
+      Agility: 8,
+      Reaction: 8,
+      Endurance: 8,
+      Perception: 8,
+      Intelligence: 8,
+      Charisma: 8,
+      Willpower: 8,
+      Magic: 0,
+    },
+    inventory: { version: 3, items: [], magazines: [], baseArmor: {}, baseMax: {} },
+    abilities:[],mana:{spent:0},effects: [], preferences: {parryMode:"off"},
+    ammunition: [],
+    weapons: {
+      melee: [],
+      ranged: [],
+    },
+  },
+};
+
+export function deepClone(value) {
+  return structuredClone(value);
+}
+
+export function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+export function enableActionResize(handle, { storageKey, defaultWidth, defaultHeight }) {
+  if (!(handle instanceof HTMLElement)) return;
+
+  const readSavedSize = () => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    } catch {
+      return null;
+    }
+  };
+  const savedSize = readSavedSize();
+  const initialWidth = clamp(Number(savedSize?.width) || defaultWidth, 360, 1200);
+  const initialHeight = clamp(Number(savedSize?.height) || defaultHeight, 500, 1200);
+  let currentWidth = initialWidth;
+  let currentHeight = initialHeight;
+  void OBR.action.setWidth(initialWidth);
+  void OBR.action.setHeight(initialHeight);
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    handle.setPointerCapture?.(event.pointerId);
+    const startWidth = currentWidth;
+    const startHeight = currentHeight;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let nextWidth = startWidth;
+    let nextHeight = startHeight;
+    let frame = null;
+
+    const applySize = () => {
+      frame = null;
+      currentWidth = nextWidth;
+      currentHeight = nextHeight;
+      void OBR.action.setWidth(nextWidth);
+      void OBR.action.setHeight(nextHeight);
+    };
+    const move = (moveEvent) => {
+      nextWidth = clamp(startWidth + moveEvent.clientX - startX, 360, 1200);
+      nextHeight = clamp(startHeight + moveEvent.clientY - startY, 500, 1200);
+      if (frame == null) frame = requestAnimationFrame(applySize);
+    };
+    const stop = () => {
+      if (frame != null) {
+        cancelAnimationFrame(frame);
+        applySize();
+      }
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({ width: nextWidth, height: nextHeight }));
+      } catch {
+        // Local size persistence is optional.
+      }
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", stop);
+    };
+
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop, { once: true });
+  });
+}
+
+function numberOrFallback(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function getSlotAttackPenalty(slot) {
+  if (slot === "head") return 30;
+  if (["left-arm", "right-arm", "left-leg", "right-leg"].includes(slot)) return 15;
+  return 0;
+}
+
+function getPartSlot(partName, source) {
+  if (partName === "Torso") return "torso";
+  return BODY_PART_SLOTS.includes(source?.slot) ? source.slot : (BODY_SLOT_BY_PART[partName] ?? "other");
+}
+
+export function sanitizeTrackerData(raw) {
+  const next = deepClone(DEFAULT_TRACKER_DATA);
+  if (!raw || typeof raw !== "object") raw = {};
+
+  next.enabled = raw.enabled !== false;
+  next.minor = clamp(Number(raw.minor ?? 0) || 0, 0, 4);
+  next.serious = clamp(Number(raw.serious ?? 0) || 0, 0, 2);
+  next.identity.playerId = String(raw.identity?.playerId ?? "").trim();
+  next.identity.characterId = String(raw.identity?.characterId ?? "").trim();
+  next.lastRoll = sanitizeRollSummary(raw.lastRoll);
+  next.history = Array.isArray(raw.history)
+    ? raw.history.map(sanitizeRollSummary).filter(Boolean).slice(0, ROLL_HISTORY_LIMIT)
+    : [];
+  next.sync.lastEventId = Math.max(0, Number(raw.sync?.lastEventId ?? 0) || 0);
+  next.sync.lastSyncedAt = raw.sync?.lastSyncedAt
+    ? String(raw.sync.lastSyncedAt)
+    : null;
+  next.avallon = sanitizeAvallonData(raw.avallon);
+
+  for (const partName of Object.keys(BODY_DEFAULTS)) {
+    const source = raw.body?.[partName] ?? {};
+    const part = next.body[partName];
+    part.max = clamp(numberOrFallback(source.max, part.max), 0, 999);
+    part.current = clamp(
+      numberOrFallback(source.current, part.current),
+      0,
+      part.max,
+    );
+    part.armor = clamp(numberOrFallback(source.armor, part.armor), 0, 999);
+    part.minor = clamp(numberOrFallback(source.minor, part.minor), 0, 3);
+    part.serious = clamp(numberOrFallback(source.serious, part.serious), 0, 1);
+    part.slot = getPartSlot(partName, source);
+    part.attackPenalty = clamp(numberOrFallback(source.attackPenalty, getSlotAttackPenalty(part.slot)), 0, 999);
+    if (part.slot !== "other") part.attackPenalty = getSlotAttackPenalty(part.slot);
+    part.hidden = partName === "Torso" ? false : source.hidden === true;
+    part.label = String(source.label ?? partName).trim().slice(0, 40) || partName;
+  }
+
+  for (const [partName, source] of Object.entries(raw.body ?? {})) {
+    if (Object.hasOwn(next.body, partName)) continue;
+    const name = String(partName).trim().slice(0, 40);
+    if (!name) continue;
+    const max = clamp(Number(source?.max) || 0, 0, 999);
+    next.body[name] = {
+      current: clamp(Number(source?.current) || 0, 0, max),
+      max,
+      armor: clamp(Number(source?.armor) || 0, 0, 999),
+      minor: clamp(Number(source?.minor) || 0, 0, 3),
+      serious: clamp(Number(source?.serious) || 0, 0, 1),
+      slot: getPartSlot(name, source),
+      attackPenalty: clamp(numberOrFallback(source?.attackPenalty, getSlotAttackPenalty(getPartSlot(name, source))), 0, 999),
+      hidden: source?.hidden === true,
+      label: String(source?.label ?? name).trim().slice(0, 40) || name,
+    };
+    if (next.body[name].slot !== "other") {
+      next.body[name].attackPenalty = getSlotAttackPenalty(next.body[name].slot);
+    }
+  }
+
+  reconcileEquipment(next);
+  return next;
+}
+
+export function sanitizeAvallonData(raw) {
+  const next = deepClone(DEFAULT_TRACKER_DATA.avallon);
+  if (!raw || typeof raw !== "object") raw = {};
+
+  next.owner.playerId = String(raw.owner?.playerId ?? "").trim();
+  next.owner.playerName = String(raw.owner?.playerName ?? "").trim();
+  next.attackDraft.targetTokenId = String(raw.attackDraft?.targetTokenId ?? "").trim();
+  next.attackDraft.targetTokenName = String(raw.attackDraft?.targetTokenName ?? "").trim();
+
+  const rawSkills = raw.skills && typeof raw.skills === "object" ? raw.skills : {};
+  const rawSkillCategories =
+    raw.skillCategories && typeof raw.skillCategories === "object"
+      ? raw.skillCategories
+      : {};
+  const rawSkillStrengthBonuses =
+    raw.skillStrengthBonuses && typeof raw.skillStrengthBonuses === "object"
+      ? raw.skillStrengthBonuses
+      : {};
+  const rawSkillLabels = raw.skillLabels && typeof raw.skillLabels === "object" ? raw.skillLabels : {};
+  const rawSkillPerks = raw.skillPerks && typeof raw.skillPerks === "object" ? raw.skillPerks : {};
+
+  const migratedMeleeValue = Math.max(
+    Number(rawSkills[MELEE_SKILL_NAME] ?? 0) || 0,
+    ...Array.from(LEGACY_MELEE_SKILL_NAMES).map((skillName) => Number(rawSkills[skillName] ?? 0) || 0),
+    Number(DEFAULT_AVALLON_SKILLS[MELEE_SKILL_NAME] ?? 0) || 0,
+  );
+  const migratedParryValue = Math.max(
+    Number(rawSkills[PARRY_SKILL_NAME] ?? 0) || 0,
+    Number(raw.attributes?.Parry ?? 0) || 0,
+    Number(DEFAULT_AVALLON_SKILLS[PARRY_SKILL_NAME] ?? 0) || 0,
+  );
+
+  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 5);
+  next.skillCategories[MELEE_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
+  next.skillStrengthBonuses[MELEE_SKILL_NAME] = true;
+  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 5);
+  next.skillCategories[PARRY_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
+  next.skillStrengthBonuses[PARRY_SKILL_NAME] = false;
+
+  for (const [key, value] of Object.entries(rawSkills)) {
+    const normalizedKey = String(key).trim();
+    if (!normalizedKey) continue;
+    if (
+      normalizedKey === MELEE_SKILL_NAME ||
+      normalizedKey === PARRY_SKILL_NAME ||
+      LEGACY_MELEE_SKILL_NAMES.has(normalizedKey) ||
+      LEGACY_REMOVED_SKILLS.has(normalizedKey)
+    ) {
+      continue;
+    }
+
+    next.skills[normalizedKey] = clamp(Number(value) || 0, 0, 10);
+    const categoryValue = String(
+      rawSkillCategories[normalizedKey] ?? rawSkillCategories[key] ?? "",
+    ).toLowerCase();
+    next.skillCategories[normalizedKey]=normalizeSkillCategory(categoryValue);
+    next.skills[normalizedKey]=Math.min(next.skills[normalizedKey],skillCap(next.skillCategories[normalizedKey]));
+    next.skillStrengthBonuses[normalizedKey] = Boolean(
+      rawSkillStrengthBonuses[normalizedKey] ?? rawSkillStrengthBonuses[key] ?? false,
+    );
+  }
+
+  for (const key of Object.keys(next.attributes)) {
+    const fallbackValue =
+      key === "Magic"
+        ? raw.attributes?.[key] ?? raw.attributes?.Psionics ?? 0
+        : raw.attributes?.[key] ?? 8;
+    next.attributes[key] = clamp(Number(fallbackValue ?? (key==="Magic"?0:8)) || 0, 0, 15);
+  }
+
+  next.skillRangeReduction={};next.skillDescriptions={};next.skillPerkDescriptions={};
+  for (const skillName of Object.keys(next.skills)) {
+    const reduction=sanitizeMagazine({rangeReduction:raw.skillRangeReduction?.[skillName]}).rangeReduction;if(Object.keys(reduction).length)next.skillRangeReduction[skillName]=reduction;
+    const description=String(raw.skillDescriptions?.[skillName]||'').trim().slice(0,2000);if(description)next.skillDescriptions[skillName]=description;
+    next.skillLabels[skillName] = String(rawSkillLabels[skillName] ?? skillName).trim().slice(0, 40) || skillName;
+    next.skillPerks[skillName] = Array.isArray(rawSkillPerks[skillName])
+      ? rawSkillPerks[skillName]
+          .map((perk) => String(perk ?? "").trim().slice(0, 40))
+          .filter(Boolean)
+          .slice(0, 12)
+      : [];
+    const perkDescriptions=Object.fromEntries(next.skillPerks[skillName].map(name=>[name,String(raw.skillPerkDescriptions?.[skillName]?.[name]||'').trim().slice(0,2000)]).filter(([,text])=>text));if(Object.keys(perkDescriptions).length)next.skillPerkDescriptions[skillName]=perkDescriptions;
+  }
+
+  next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
+  next.weapons.ranged = sanitizeWeapons(raw.weapons?.ranged, true);
+  next.ammunition = sanitizeAmmunition(raw.ammunition);
+  next.inventory = normalizeInventory(raw.inventory, next.weapons.ranged,'',next.skillLabels);
+  next.effects = normalizeEffects(raw.effects);
+  next.abilities=normalizeAbilities(raw.abilities);next.mana=normalizeMana(raw.mana);
+  if(raw.vehicle?.enabled)next.vehicle={enabled:true,pilotTokenId:String(raw.vehicle.pilotTokenId||'').trim().slice(0,120)};
+  next.preferences = {parryMode: ["off","1","2","3","4","5"].includes(raw.preferences?.parryMode) ? raw.preferences.parryMode : "off"};
+  for (const [key,label] of Object.entries(ARMOR_TRAINING)) { next.skills[key]=clamp(Number(raw.skills?.[key])||0,0,1); next.skillLabels[key]=label;next.skillCategories[key]="passive";next.skillStrengthBonuses[key]=false;next.skillPerks[key]??=[]; }
+
+  return next;
+}
+
+function sanitizeWeapons(raw, ranged = false) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => ({
+      id: String(item.id || `legacy-${ranged?"ranged":"melee"}-${index}`),
+      name: String(item.name ?? "").trim() || "Weapon",
+      description: String(item.description||'').trim().slice(0,2000),
+      damage: clamp(Number(item.damage ?? 0) || 0, -999, 999),
+      accuracy: clamp(Number(item.accuracy ?? 0) || 0, -999, 999),
+      ...(ranged ? { ...(Object.hasOwn(item, "magazineId") ? { magazineId: String(item.magazineId || "") } : {}), ...sanitizeMagazine(item), id: String(item.id || `legacy-ranged-${index}`) } : {}),
+    }))
+    .slice(0, 20);
+}
+
+export function sanitizeRollSummary(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const eventId = Math.max(0, Number(raw.eventId ?? 0) || 0);
+  const summary = String(raw.summary ?? "").trim();
+  const actorName = String(raw.actorName ?? "").trim();
+  const outcome = String(raw.outcome ?? "").trim();
+  const total = raw.total == null ? null : Number(raw.total) || 0;
+  const targetPart = String(raw.targetPart ?? "").trim();
+  const timestamp = raw.timestamp ? String(raw.timestamp) : null;
+  const source = String(raw.source ?? "bridge").trim();
+
+  if (!summary && !actorName && total == null && !outcome) {
+    return null;
+  }
+
+  return {
+    eventId,
+    summary,
+    actorName,
+    outcome,
+    total,
+    targetPart,
+    timestamp,
+    source,
+  };
+}
+
+export function getTrackerData(item) {
+  return sanitizeTrackerData(item?.metadata?.[META_KEY]);
+}
+
+export function isCharacterToken(item) {
+  return Boolean(item) && isImage(item) && item.layer === "CHARACTER";
+}
+
+export function isTrackedCharacter(item) {
+  return isCharacterToken(item) && item.metadata?.[META_KEY]?.enabled === true;
+}
+
+export function isOverlayItem(item) {
+  return Boolean(item?.metadata?.[OVERLAY_KEY]);
+}
+
+export function getCharacterName(item) {
+  if (!item) return "Unnamed character";
+  const byName = typeof item.name === "string" ? item.name.trim() : "";
+  if (byName) return byName;
+  return `Character ${item.id.slice(0, 6)}`;
+}
+
+export function sortCharacters(items) {
+  return [...items].sort((left, right) =>
+    getCharacterName(left).localeCompare(getCharacterName(right)),
+  );
+}
+
+export function formatOverlayText(data) {
+  const body = data.body;
+  const lines = [];
+
+  if (hasConfiguredShield(data)) {
+    lines.push(
+      `${SHIELD_PART_NAME} ${body[SHIELD_PART_NAME].current}/${body[SHIELD_PART_NAME].max}(${body[SHIELD_PART_NAME].armor})`,
+    );
+  }
+
+  if (hasConfiguredSpecial(data)) {
+    lines.push(
+      `${SPECIAL_PART_NAME} ${body[SPECIAL_PART_NAME].current}/${body[SPECIAL_PART_NAME].max}(${body[SPECIAL_PART_NAME].armor})`,
+    );
+  }
+
+  const parts = getBodyPartNames(data).map((partName) => {
+    const part = body[partName];
+    return `${getBodyPartLabel(data, partName)} ${part.current}/${part.max}(${part.armor})`;
+  });
+  for (let index = 0; index < parts.length; index += 3) {
+    lines.push(parts.slice(index, index + 3).join(" | "));
+  }
+
+  return lines.join("\n");
+}
+
+export function formatLastRoll(lastRoll) {
+  const parts = [];
+  if (lastRoll.actorName) parts.push(lastRoll.actorName);
+  if (lastRoll.total != null) parts.push(`roll ${lastRoll.total}`);
+  if (lastRoll.outcome) parts.push(lastRoll.outcome);
+  if (lastRoll.targetPart) parts.push(`target ${lastRoll.targetPart}`);
+  if (lastRoll.summary) parts.push(lastRoll.summary);
+  return parts.join(" | ");
+}
+
+export function getAvallonData(item, tokens=[]) {
+  const own=effectiveAvallon(sanitizeAvallonData(getTrackerData(item).avallon)),id=own.vehicle?.pilotTokenId;
+  if(!id)return own;
+  const pilot=tokens.find(t=>t.id===id&&t.id!==item.id&&isCharacterToken(t));
+  if(!pilot||getTrackerData(pilot).avallon.vehicle?.enabled)return {...own,pilotMissing:true};
+  const driver=effectiveAvallon(getTrackerData(pilot).avallon),fields=['attributes','baseAttributes','skills','baseSkills','skillLabels','skillCategories','skillPerks','skillDescriptions','skillPerkDescriptions','skillStrengthBonuses','skillRangeReduction','grantedSkills','skillAliases','availableSkills','modifiers','rangeReduction'];
+  const result={...own,pilot:{id:pilot.id,name:getCharacterName(pilot)}};for(const key of fields)result[key]=driver[key];
+  result.effectRows=[...(driver.effectRows||[]),...(own.effectRows||[])];return result;
+}
+
+export function canPlayerControlToken(playerRole, playerId, token, tokens=[]) {
+  if (!token || !isCharacterToken(token)) return false;
+  if (playerRole === "GM") return true;
+  const avallon = getAvallonData(token);
+  const pilot=avallon.vehicle?.pilotTokenId&&tokens.find(t=>t.id===avallon.vehicle.pilotTokenId&&isCharacterToken(t)&&!getTrackerData(t).avallon.vehicle?.enabled);
+  return Boolean(playerId) && (avallon.owner.playerId === playerId||Boolean(pilot&&getTrackerData(pilot).avallon.owner.playerId===playerId));
+}
+
+export function getAvailableWeapons(token, mode = "melee") {
+  const avallon = getAvallonData(token);
+  const list = mode === "ranged" ? avallon.weapons.ranged : avallon.weapons.melee;
+  return list.length ? list : [{ name: "Default", damage: 0, accuracy: 0 }];
+}
+
+export function getBodyTotals(data) {
+  return getBodyPartNames(data).reduce(
+    (accumulator, partName) => {
+      accumulator.current += data.body[partName].current;
+      accumulator.max += data.body[partName].max;
+      return accumulator;
+    },
+    { current: 0, max: 0 },
+  );
+}
+
+export function getArmorTotal(dataOrBody) {
+  const body = dataOrBody?.body ?? dataOrBody ?? {};
+  return Object.values(body).reduce((total, part) => total + (Number(part?.armor) || 0), 0);
+}
+
+export function getBodyPartNames(dataOrBody) {
+  const body = dataOrBody?.body ?? dataOrBody ?? {};
+  const names = Object.keys(body).filter((partName) => partName !== SHIELD_PART_NAME && partName !== SPECIAL_PART_NAME);
+  return names.sort((left, right) => {
+    if (left === "Torso") return -1;
+    if (right === "Torso") return 1;
+    const leftIndex = BODY_TOTAL_ORDER.indexOf(left);
+    const rightIndex = BODY_TOTAL_ORDER.indexOf(right);
+    if (leftIndex >= 0 || rightIndex >= 0) return (leftIndex < 0 ? 99 : leftIndex) - (rightIndex < 0 ? 99 : rightIndex);
+    return left.localeCompare(right);
+  });
+}
+
+export function getBodyPartLabel(dataOrBody, partName) {
+  const body = dataOrBody?.body ?? dataOrBody ?? {};
+  return String(body?.[partName]?.label ?? partName).trim() || partName;
+}
+
+export function hasConfiguredShield(dataOrBody) {
+  const body = dataOrBody?.body ?? dataOrBody;
+  const shield = body?.[SHIELD_PART_NAME];
+  if (!shield || typeof shield !== "object") return false;
+
+  return (
+    (Number(shield.max) || 0) > 0 ||
+    (Number(shield.current) || 0) > 0 ||
+    (Number(shield.armor) || 0) > 0
+  );
+}
+
+export function hasConfiguredSpecial(dataOrBody) {
+  const body = dataOrBody?.body ?? dataOrBody;
+  const special = body?.[SPECIAL_PART_NAME];
+  if (!special || typeof special !== "object") return false;
+
+  return (
+    (Number(special.max) || 0) > 0 ||
+    (Number(special.current) || 0) > 0 ||
+    (Number(special.armor) || 0) > 0
+  );
+}
+
+export function getTargetableBodyParts(dataOrBody, includeHidden = false) {
+  const body = dataOrBody?.body ?? dataOrBody ?? {};
+  const parts = getBodyPartNames(body).filter(
+    (partName) => includeHidden || body[partName]?.hidden !== true,
+  );
+  return parts.length ? parts : ["Torso"];
+}
+
+export function getBodyPartAttackPenalty(dataOrBody, partName) {
+  const body = dataOrBody?.body ?? dataOrBody ?? {};
+  const part = body?.[partName];
+  const slot = getPartSlot(partName, part);
+  return slot === "other"
+    ? clamp(numberOrFallback(part?.attackPenalty, 0), 0, 999)
+    : getSlotAttackPenalty(slot);
+}
+
+function getEffectiveSize(token, sceneGridDpi) {
+  const scaleX = Math.abs(token.scale?.x ?? 1);
+  const scaleY = Math.abs(token.scale?.y ?? 1);
+  const imageWidth = Number(token.image?.width);
+  const imageHeight = Number(token.image?.height);
+  const imageGridDpi = Number(token.grid?.dpi);
+  const baseWidth =
+    imageWidth > 0 && imageGridDpi > 0
+      ? (imageWidth / imageGridDpi) * sceneGridDpi
+      : Number(token.width) || sceneGridDpi;
+  const baseHeight =
+    imageHeight > 0 && imageGridDpi > 0
+      ? (imageHeight / imageGridDpi) * sceneGridDpi
+      : Number(token.height) || sceneGridDpi;
+  return {
+    width: baseWidth * scaleX,
+    height: baseHeight * scaleY,
+  };
+}
+
+async function getTokenMetrics(token, data) {
+  const gridDpi = await getCachedGridDpi();
+  const effectiveSize = getEffectiveSize(token, gridDpi);
+  const center = token.position;
+  const width = effectiveSize.width;
+  const height = effectiveSize.height;
+
+  const scaleFactor = Math.max(
+    Math.abs(token.scale?.x ?? 1),
+    Math.abs(token.scale?.y ?? 1),
+    1,
+  );
+  const visibleDiameter = Math.max(
+    width,
+    height,
+    effectiveSize.width,
+    effectiveSize.height,
+    gridDpi * scaleFactor,
+    56,
+  );
+  const tokenRadius = visibleDiameter / 2;
+  const tokenGap = 0;
+  const torsoThickness = Math.max(5, visibleDiameter * 0.035);
+  const torsoInnerRadius = tokenRadius + tokenGap;
+  const torsoOuterRadius = torsoInnerRadius + torsoThickness;
+  const ringGap = 0;
+  const outerThickness = Math.max(8, visibleDiameter * 0.08);
+  const outerInnerRadius = torsoOuterRadius + ringGap;
+  const outerRadius = outerInnerRadius + outerThickness;
+  const otherParts = getBodyPartNames(data).filter(
+    (partName) => data.body?.[partName]?.slot === "other" && data.body?.[partName]?.hidden !== true,
+  );
+  const extraInnerRadius = outerRadius + Math.max(4, visibleDiameter * 0.03);
+  const extraOuterRadius = extraInnerRadius + outerThickness;
+  const specialThickness = Math.max(4, visibleDiameter * 0.03);
+  const specialInnerRadius = otherParts.length ? extraOuterRadius : outerRadius;
+  const specialOuterRadius = specialInnerRadius + specialThickness;
+  const shieldThickness = Math.max(4, visibleDiameter * 0.028);
+  const shieldOuterRadius = Math.max(10, visibleDiameter * 0.1);
+  const shieldInnerRadius = Math.max(4, shieldOuterRadius - shieldThickness);
+  const shieldOffsetY = -(specialOuterRadius + shieldOuterRadius + Math.max(5, visibleDiameter * 0.035));
+
+  return {
+    center,
+    visibleDiameter,
+    outerRadius,
+    outerInnerRadius,
+    extraInnerRadius,
+    extraOuterRadius,
+    torsoOuterRadius,
+    torsoInnerRadius,
+    specialOuterRadius,
+    specialInnerRadius,
+    shieldOuterRadius,
+    shieldInnerRadius,
+    shieldOffsetY,
+  };
+}
+
+function getOverlayPartLayout(data, metrics) {
+  const visibleParts = getBodyPartNames(data).filter(
+    (partName) => partName !== "Torso" && data.body?.[partName]?.hidden !== true,
+  );
+  const layouts = [];
+  for (const { slot, angle } of BODY_SLOT_LAYOUT) {
+    const parts = visibleParts.filter((partName) => data.body?.[partName]?.slot === slot);
+    const span = 60 / Math.max(parts.length, 1);
+    parts.forEach((partName, index) => {
+      layouts.push({
+        partName,
+        angle: angle - 30 + span * (index + 0.5),
+        span,
+        innerRadius: metrics.outerInnerRadius,
+        outerRadius: metrics.outerRadius,
+      });
+    });
+  }
+
+  const otherParts = visibleParts.filter((partName) => data.body?.[partName]?.slot === "other");
+  const otherSpan = Math.min(60, (360 / Math.max(otherParts.length, 1)) * 0.8);
+  otherParts.forEach((partName, index) => {
+    layouts.push({
+      partName,
+      angle: -90 + otherSpan * index,
+      span: otherSpan,
+      innerRadius: metrics.extraInnerRadius,
+      outerRadius: metrics.extraOuterRadius,
+    });
+  });
+  return layouts;
+}
+
+async function getCachedGridDpi(forceRefresh = false) {
+  if (!forceRefresh && Number.isFinite(cachedGridDpi) && cachedGridDpi > 0) {
+    return cachedGridDpi;
+  }
+
+  let gridDpi = 150;
+  try {
+    gridDpi = (await OBR.scene.grid.getDpi()) || gridDpi;
+  } catch (error) {
+    console.warn("[Body HP] Unable to read grid dpi, using fallback size", error);
+  }
+
+  cachedGridDpi = Math.max(1, Number(gridDpi) || 150);
+  return cachedGridDpi;
+}
+
+function polar(radius, angle) {
+  const radians = (angle * Math.PI) / 180;
+  return {
+    x: radius * Math.cos(radians),
+    y: radius * Math.sin(radians),
+  };
+}
+
+function arcPoints(radius, startAngle, endAngle, segments = 18) {
+  const points = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const ratio = index / segments;
+    const angle = startAngle + (endAngle - startAngle) * ratio;
+    points.push(polar(radius, angle));
+  }
+  return points;
+}
+
+function buildAnnulusCommands(radiusOuter, radiusInner, offsetX = 0, offsetY = 0) {
+  const outer = arcPoints(radiusOuter, -180, 180, 36).map((point) => ({
+    x: point.x + offsetX,
+    y: point.y + offsetY,
+  }));
+  const inner = arcPoints(radiusInner, -180, 180, 36).map((point) => ({
+    x: point.x + offsetX,
+    y: point.y + offsetY,
+  }));
+  const commands = [[Command.MOVE, outer[0].x, outer[0].y]];
+
+  for (const point of outer.slice(1)) {
+    commands.push([Command.LINE, point.x, point.y]);
+  }
+
+  commands.push([Command.CLOSE]);
+  commands.push([Command.MOVE, inner[0].x, inner[0].y]);
+
+  for (const point of inner) {
+    commands.push([Command.LINE, point.x, point.y]);
+  }
+
+  commands.push([Command.CLOSE]);
+  return commands;
+}
+
+function buildSectorCommands(radiusOuter, radiusInner, centerAngle, spanAngle) {
+  const startAngle = centerAngle - spanAngle / 2;
+  const endAngle = centerAngle + spanAngle / 2;
+  const segments = Math.max(10, Math.ceil(Math.abs(spanAngle) / 5));
+  const outer = arcPoints(radiusOuter, startAngle, endAngle, segments);
+  const inner = arcPoints(radiusInner, endAngle, startAngle, segments);
+  const commands = [[Command.MOVE, outer[0].x, outer[0].y]];
+
+  for (const point of outer.slice(1)) {
+    commands.push([Command.LINE, point.x, point.y]);
+  }
+
+  for (const point of inner) {
+    commands.push([Command.LINE, point.x, point.y]);
+  }
+
+  commands.push([Command.CLOSE]);
+  return commands;
+}
+
+function hexToRgb(hex) {
+  const normalized = String(hex).replace("#", "");
+  const value = normalized.length === 3
+    ? normalized
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("")
+    : normalized;
+
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16) || 0,
+    g: Number.parseInt(value.slice(2, 4), 16) || 0,
+    b: Number.parseInt(value.slice(4, 6), 16) || 0,
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b]
+    .map((channel) =>
+      clamp(Math.round(channel), 0, 255).toString(16).padStart(2, "0").toUpperCase(),
+    )
+    .join("")}`;
+}
+
+function mixHexColors(startHex, endHex, ratio) {
+  const safeRatio = clamp(ratio, 0, 1);
+  const start = hexToRgb(startHex);
+  const end = hexToRgb(endHex);
+
+  return rgbToHex({
+    r: start.r + (end.r - start.r) * safeRatio,
+    g: start.g + (end.g - start.g) * safeRatio,
+    b: start.b + (end.b - start.b) * safeRatio,
+  });
+}
+
+function getHpColor(ratio) {
+  const safeRatio = clamp(ratio, 0, 1);
+
+  for (let index = 0; index < HP_COLOR_STOPS.length - 1; index += 1) {
+    const upper = HP_COLOR_STOPS[index];
+    const lower = HP_COLOR_STOPS[index + 1];
+
+    if (safeRatio > upper.ratio || safeRatio < lower.ratio) {
+      continue;
+    }
+
+    const span = upper.ratio - lower.ratio;
+    if (span <= 0) return upper.color;
+    const progress = (safeRatio - lower.ratio) / span;
+    return mixHexColors(lower.color, upper.color, progress);
+  }
+
+  return HP_COLOR_STOPS.at(-1)?.color ?? RING_COLORS.base;
+}
+
+function getPartColor(part) {
+  if (part.max <= 0) {
+    return (Number(part?.armor) || 0) > 0 ? getHpColor(1) : getHpColor(0);
+  }
+  return getHpColor(part.current / part.max);
+}
+
+function getSpecialPartColor(part) {
+  const ratio =
+    (Number(part?.max) || 0) > 0
+      ? clamp((Number(part?.current) || 0) / (Number(part?.max) || 1), 0, 1)
+      : (Number(part?.current) || 0) > 0 || (Number(part?.armor) || 0) > 0
+        ? 1
+        : 0;
+  return mixHexColors("#000000", SPECIAL_RING_COLOR, ratio);
+}
+
+function buildRingItem(
+  token,
+  metrics,
+  kind,
+  commands,
+  fillColor,
+  zIndex = 0,
+  fillRule = "nonzero",
+  signature = "",
+  itemVisible = true,
+) {
+  return buildPath()
+    .name(`${kind}: ${getCharacterName(token)}`)
+    .commands(commands)
+    .fillRule(fillRule)
+    .fillColor(fillColor)
+    .fillOpacity(1)
+    .strokeColor(RING_COLORS.border)
+    .strokeOpacity(1)
+    .strokeWidth(OVERLAY_STROKE_WIDTH)
+    .position(metrics.center)
+    .rotation(0)
+    .zIndex((token.zIndex ?? 0) + 100 + zIndex)
+    .visible(itemVisible && token.visible !== false)
+    .attachedTo(token.id)
+    .disableAttachmentBehavior(["ROTATION"])
+    .layer("ATTACHMENT")
+    .locked(true)
+    .disableHit(true)
+    .metadata({
+      [OVERLAY_KEY]: token.id,
+      kind,
+      visualVersion: VISUAL_VERSION,
+      signature,
+    })
+    .build();
+}
+
+function applyOverlayItemState(target, source) {
+  target.name = source.name;
+  target.commands = source.commands;
+  target.fillRule = source.fillRule;
+  target.fillColor = source.fillColor;
+  target.fillOpacity = source.fillOpacity;
+  target.strokeColor = source.strokeColor;
+  target.strokeOpacity = source.strokeOpacity;
+  target.strokeWidth = source.strokeWidth;
+  target.position = source.position;
+  target.rotation = source.rotation;
+  target.zIndex = source.zIndex;
+  target.visible = source.visible;
+  target.metadata = {
+    ...(target.metadata ?? {}),
+    ...(source.metadata ?? {}),
+  };
+}
+
+function hasPatchableOverlaySet(token, overlayItems, expectedKinds) {
+  if (overlayItems.length !== expectedKinds.length) {
+    return false;
+  }
+
+  const seenKinds = new Set();
+  return overlayItems.every((item) => {
+    const kind = String(item.metadata?.kind ?? "");
+    const valid =
+      item.attachedTo === token.id &&
+      Number(item.metadata?.visualVersion ?? 0) === VISUAL_VERSION &&
+      expectedKinds.includes(kind) &&
+      !seenKinds.has(kind);
+    seenKinds.add(kind);
+    return valid;
+  });
+}
+
+function roundMetric(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function commandsToSvgPath(commands) {
+  return commands
+    .map((command) => {
+      const [type, x = 0, y = 0] = command;
+      if (type === Command.MOVE) {
+        return `M ${roundMetric(x)} ${roundMetric(y)}`;
+      }
+      if (type === Command.LINE) {
+        return `L ${roundMetric(x)} ${roundMetric(y)}`;
+      }
+      if (type === Command.CLOSE) {
+        return "Z";
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildOverlayBounds(metrics, data) {
+  const specialActive = hasConfiguredSpecial(data);
+  const ringRadius = specialActive ? metrics.specialOuterRadius : metrics.outerRadius;
+  const horizontalExtent = ringRadius;
+  const topExtent = ringRadius;
+  const bottomExtent = ringRadius;
+  const padding = Math.max(2, metrics.visibleDiameter * 0.02);
+
+  return {
+    minX: -horizontalExtent - padding,
+    maxX: horizontalExtent + padding,
+    minY: -topExtent - padding,
+    maxY: bottomExtent + padding,
+  };
+}
+
+function buildOverlaySignature(token, data, metrics) {
+  const bodySignature = getBodyPartNames(data).map((partName) => {
+    const part = data.body?.[partName] ?? {};
+    return `${partName}:${part.slot ?? "other"}:${part.hidden === true}:${getPartColor(part)}`;
+  }).join("|");
+
+  return [
+    VISUAL_VERSION,
+    roundMetric(metrics.visibleDiameter),
+    roundMetric(metrics.outerRadius),
+    roundMetric(metrics.outerInnerRadius),
+    roundMetric(metrics.extraInnerRadius),
+    roundMetric(metrics.extraOuterRadius),
+    roundMetric(metrics.torsoOuterRadius),
+    roundMetric(metrics.torsoInnerRadius),
+    roundMetric(metrics.specialOuterRadius),
+    roundMetric(metrics.specialInnerRadius),
+    hasConfiguredSpecial(data),
+    bodySignature,
+  ].join(";");
+}
+
+function buildOverlaySvgMarkup(token, data, metrics) {
+  const layers = [
+    {
+      d: commandsToSvgPath(buildAnnulusCommands(metrics.outerRadius, metrics.outerInnerRadius)),
+      fill: RING_COLORS.base,
+      fillRule: "evenodd",
+    },
+    ...getOverlayPartLayout(data, metrics).map((segment) => ({
+      d: commandsToSvgPath(
+        buildSectorCommands(
+          segment.outerRadius,
+          segment.innerRadius,
+          segment.angle,
+          segment.span,
+        ),
+      ),
+      fill: getPartColor(data.body[segment.partName]),
+      fillRule: "nonzero",
+    })),
+    {
+      d: commandsToSvgPath(
+        buildAnnulusCommands(metrics.torsoOuterRadius, metrics.torsoInnerRadius),
+      ),
+      fill: getPartColor(data.body.Torso),
+      fillRule: "evenodd",
+    },
+  ];
+
+  if (hasConfiguredSpecial(data)) {
+    layers.push({
+      d: commandsToSvgPath(
+        buildAnnulusCommands(metrics.specialOuterRadius, metrics.specialInnerRadius),
+      ),
+      fill: getSpecialPartColor(data.body[SPECIAL_PART_NAME]),
+      fillRule: "evenodd",
+    });
+  }
+
+  const bounds = buildOverlayBounds(metrics, data);
+  const width = Math.max(1, roundMetric(bounds.maxX - bounds.minX));
+  const height = Math.max(1, roundMetric(bounds.maxY - bounds.minY));
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${roundMetric(bounds.minX)} ${roundMetric(bounds.minY)} ${width} ${height}" width="${width}" height="${height}">${layers
+    .map(
+      (layer) =>
+        `<path d="${layer.d}" fill="${layer.fill}" fill-rule="${layer.fillRule}" stroke="${RING_COLORS.border}" stroke-width="${OVERLAY_STROKE_WIDTH}" stroke-opacity="1" vector-effect="non-scaling-stroke"/>`,
+    )
+    .join("")}</svg>`;
+
+  return {
+    svg,
+    width,
+    height,
+    signature: buildOverlaySignature(token, data, metrics),
+  };
+}
+
+function svgToDataUrl(svg) {
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
+function applyBodyEffects(next, bodyEffects) {
+  const body=next.body;
+  if (!bodyEffects || typeof bodyEffects !== "object") return;
+
+  for (const partName of Object.keys(body ?? {})) {
+    const patch = bodyEffects[partName];
+    if (!patch || typeof patch !== "object") continue;
+    const part = body[partName];
+
+    if (patch.max != null || patch.max_delta != null) {
+      const baseMax = patch.max != null ? Number(patch.max) || 0 : part.max;
+      const deltaMax = Number(patch.max_delta) || 0;
+      setCombinedPartMax(next,partName,baseMax+deltaMax);
+    }
+
+    if (patch.current != null || patch.current_delta != null) {
+      const baseCurrent =
+        patch.current != null ? Number(patch.current) || 0 : part.current;
+      const deltaCurrent = Number(patch.current_delta) || 0;
+      setCombinedPartHp(next,partName,baseCurrent+deltaCurrent);
+    } else {
+      part.current = clamp(part.current, 0, part.max);
+    }
+
+    if (patch.armor != null || patch.armor_delta != null) {
+      const baseArmor = patch.armor != null ? Number(patch.armor) || 0 : part.armor;
+      const deltaArmor = Number(patch.armor_delta) || 0;
+      part.armor = clamp(baseArmor + deltaArmor, 0, 999);
+    }
+
+    if (patch.minor != null || patch.minor_delta != null) {
+      const baseMinor = patch.minor != null ? Number(patch.minor) || 0 : part.minor;
+      const deltaMinor = Number(patch.minor_delta) || 0;
+      part.minor = clamp(baseMinor + deltaMinor, 0, 3);
+    }
+
+    if (patch.serious != null || patch.serious_delta != null) {
+      const baseSerious = patch.serious != null ? Number(patch.serious) || 0 : part.serious;
+      const deltaSerious = Number(patch.serious_delta) || 0;
+      part.serious = clamp(baseSerious + deltaSerious, 0, 1);
+    }
+  }
+}
+
+export function applyRollEventToData(current, event) {
+  const next = sanitizeTrackerData(current);
+  const payload = event?.payload ?? {};
+  const effects = payload.effects ?? {};
+  const rollSummary = sanitizeRollSummary({
+    eventId: event?.id,
+    actorName: event?.actor_name ?? payload.actor_name,
+    summary: event?.summary ?? payload.summary,
+    total: payload.total,
+    outcome: payload.outcome,
+    targetPart: payload.target_part,
+    timestamp: event?.created_at,
+    source: "bridge",
+  });
+
+  next.minor = clamp(
+    effects.minor != null
+      ? Number(effects.minor) || 0
+      : next.minor + (Number(effects.minor_delta) || 0),
+    0,
+    4,
+  );
+  next.serious = clamp(
+    effects.serious != null
+      ? Number(effects.serious) || 0
+      : next.serious + (Number(effects.serious_delta) || 0),
+    0,
+    2,
+  );
+
+  applyBodyEffects(next, effects.body);
+
+  if (effects.identity && typeof effects.identity === "object") {
+    next.identity.playerId = String(
+      effects.identity.player_id ?? next.identity.playerId,
+    ).trim();
+    next.identity.characterId = String(
+      effects.identity.character_id ?? next.identity.characterId,
+    ).trim();
+  }
+
+  next.sync.lastEventId = Math.max(next.sync.lastEventId, Number(event?.id) || 0);
+  next.sync.lastSyncedAt = event?.created_at ?? new Date().toISOString();
+
+  if (rollSummary) {
+    next.lastRoll = rollSummary;
+    next.history = [rollSummary, ...next.history].slice(0, ROLL_HISTORY_LIMIT);
+  }
+
+  return next;
+}
+
+export async function updateTrackerData(tokenId, updater) {
+  await OBR.scene.items.updateItems([tokenId], (items) => {
+    const token = items[0];
+    if (!token) return;
+    token.metadata ??= {};
+    token.metadata[META_KEY] = sanitizeTrackerData(
+      updater(getTrackerData(token)),
+    );
+  });
+}
+
+export function buildOverlayItems(token, data, metrics, signature = "") {
+  const items = [];
+  const makeSignature = (kind, commands, color, visible) =>
+    `${VISUAL_VERSION}|${kind}|${roundMetric(metrics.visibleDiameter)}|${roundMetric(metrics.center.x)}|${roundMetric(metrics.center.y)}|${color}|${visible}|${JSON.stringify(commands)}`;
+
+  for (const segment of getOverlayPartLayout(data, metrics)) {
+    const part = data.body[segment.partName];
+    const kind = `part-${segment.partName}`;
+    const commands = buildSectorCommands(
+      segment.outerRadius,
+      segment.innerRadius,
+      segment.angle,
+      segment.span,
+    );
+    items.push(buildRingItem(token, metrics, kind, commands, getPartColor(part), 1, "nonzero", makeSignature(kind, commands, getPartColor(part), true), true));
+  }
+
+  const torsoCommands = buildAnnulusCommands(metrics.torsoOuterRadius, metrics.torsoInnerRadius);
+  items.push(buildRingItem(token, metrics, "torso-ring", torsoCommands, getPartColor(data.body.Torso), 2, "evenodd", makeSignature("torso-ring", torsoCommands, getPartColor(data.body.Torso), true), true));
+
+  if (hasConfiguredSpecial(data)) {
+    const specialCommands = buildAnnulusCommands(metrics.specialOuterRadius, metrics.specialInnerRadius);
+    items.push(buildRingItem(token, metrics, "special-ring", specialCommands, getSpecialPartColor(data.body[SPECIAL_PART_NAME]), 3, "evenodd", makeSignature("special-ring", specialCommands, getSpecialPartColor(data.body[SPECIAL_PART_NAME]), true), true));
+  }
+
+  return items;
+}
+
+function getExpectedOverlayKinds(data) {
+  return [
+    ...getBodyPartNames(data)
+      .filter((partName) => partName !== "Torso" && data.body?.[partName]?.hidden !== true)
+      .map((partName) => `part-${partName}`),
+    "torso-ring",
+    ...(hasConfiguredSpecial(data) ? ["special-ring"] : []),
+  ];
+}
+
+export async function removeOverlaysForToken(tokenId, items) {
+  const sceneItems = items ?? (await OBR.scene.items.getItems());
+  const overlayIds = sceneItems
+    .filter((item) => item.metadata?.[OVERLAY_KEY] === tokenId)
+    .map((item) => item.id);
+
+  if (overlayIds.length) {
+    await OBR.scene.items.deleteItems(overlayIds);
+  }
+}
+
+async function ensureOverlayForTokenInternal(tokenId, items) {
+  const sceneItems = items ?? (await OBR.scene.items.getItems());
+  const token = sceneItems.find((item) => item.id === tokenId);
+  if (!token || !isCharacterToken(token)) return;
+  const overlayItems = sceneItems.filter((item) => item.metadata?.[OVERLAY_KEY] === tokenId);
+
+  if (!isTrackedCharacter(token) || token.visible === false) {
+    if (overlayItems.length) {
+      await removeOverlaysForToken(tokenId, sceneItems);
+    }
+    return;
+  }
+
+  const data = getTrackerData(token);
+  const metrics = await getTokenMetrics(token, data);
+  const overlaySignature = buildOverlaySignature(token, data, metrics);
+  const expectedKinds = getExpectedOverlayKinds(data);
+
+  if (hasPatchableOverlaySet(token, overlayItems, expectedKinds)) {
+    const nextOverlayItems = buildOverlayItems(token, data, metrics, overlaySignature);
+    const nextOverlayByKind = new Map(
+      nextOverlayItems.map((item) => [String(item.metadata?.kind ?? ""), item]),
+    );
+    const itemsToUpdate = overlayItems.filter((item) => {
+      const kind = String(item.metadata?.kind ?? "");
+      const nextItem = nextOverlayByKind.get(kind);
+      return String(item.metadata?.signature ?? "") !== String(nextItem?.metadata?.signature ?? "");
+    });
+    if (!itemsToUpdate.length) return;
+    try {
+      await OBR.scene.items.updateItems(
+        itemsToUpdate.map((item) => item.id),
+        (sceneItemsToUpdate) => {
+          for (const overlayItem of sceneItemsToUpdate) {
+            const kind = String(overlayItem.metadata?.kind ?? "");
+            const nextItem = nextOverlayByKind.get(kind);
+            if (!nextItem) continue;
+            applyOverlayItemState(overlayItem, nextItem);
+          }
+        },
+      );
+      return;
+    } catch (error) {
+      console.warn("[Body HP] Overlay patch failed, falling back to rebuild", error);
+    }
+  }
+
+  await removeOverlaysForToken(tokenId);
+
+  await OBR.scene.items.addItems(
+    buildOverlayItems(token, data, metrics, overlaySignature),
+  );
+}
+
+export function ensureOverlayForToken(tokenId) {
+  let pending = overlayEnsureQueue.get(tokenId);
+  if (!pending) {
+    pending = { timer: null, running: false, waiters: [] };
+    overlayEnsureQueue.set(tokenId, pending);
+  }
+
+  return new Promise((resolve, reject) => {
+    pending.waiters.push({ resolve, reject });
+    if (pending.running) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      pending.timer = null;
+      void flushOverlayEnsure(tokenId, pending);
+    }, OVERLAY_UPDATE_DELAY_MS);
+  });
+}
+
+async function flushOverlayEnsure(tokenId, pending) {
+  if (pending.running) return;
+  pending.running = true;
+  const waiters = pending.waiters.splice(0);
+
+  try {
+    await ensureOverlayForTokenInternal(tokenId);
+    waiters.forEach(({ resolve }) => resolve());
+  } catch (error) {
+    waiters.forEach(({ reject }) => reject(error));
+  } finally {
+    pending.running = false;
+    if (pending.waiters.length) {
+      pending.timer = setTimeout(() => {
+        pending.timer = null;
+        void flushOverlayEnsure(tokenId, pending);
+      }, OVERLAY_UPDATE_DELAY_MS);
+    } else {
+      overlayEnsureQueue.delete(tokenId);
+    }
+  }
+}
+
+export async function setTrackedState(tokenId, enabled) {
+  if (enabled) {
+    await updateTrackerData(tokenId, (current) => ({
+      ...current,
+      enabled: true,
+    }));
+    await ensureOverlayForToken(tokenId);
+    return;
+  }
+
+  await OBR.scene.items.updateItems([tokenId], (items) => {
+    const token = items[0];
+    if (!token) return;
+    token.metadata ??= {};
+    delete token.metadata[META_KEY];
+  });
+
+  await removeOverlaysForToken(tokenId);
+}
+
+export async function applyRemoteRollEvent(event) {
+  if (!event?.token_id) return false;
+
+  const sceneItems = await OBR.scene.items.getItems();
+  const token = sceneItems.find((item) => item.id === event.token_id);
+  if (!token || !isTrackedCharacter(token)) return false;
+
+  await updateTrackerData(token.id, (current) => applyRollEventToData(current, event));
+  await ensureOverlayForToken(token.id);
+  return true;
+}
+
+export async function syncTrackedOverlays() {
+  const items = await OBR.scene.items.getItems();
+  const overlayIds = items.filter(isOverlayItem).map((item) => item.id);
+  if (overlayIds.length) {
+    await OBR.scene.items.deleteItems(overlayIds);
+  }
+
+  const trackedTokens = items.filter((item) => isTrackedCharacter(item) && item.visible !== false);
+  for (const token of trackedTokens) {
+    await ensureOverlayForToken(token.id);
+  }
+}

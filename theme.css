@@ -1,0 +1,21 @@
+/* Avallon: parchment, burgundy and aged gold. */
+:root{color-scheme:dark;--bg:#181411;--bg-top:#241a16;--bg-bottom:#15120f;--panel:#27201a;--panel-2:#352820;--panel-strong:#30241e;--line:#69513a;--text:#f2e5ce;--muted:#c1ae91;--blue:#b68a48;--accent:#d3ad6b;--accent-soft:#d3ad6b24;--green:#31553f;--red:#8d343a;--success:#a8d3a5;--danger:#f3a49b;--warning:#eac17d}
+html,body{background:radial-gradient(ellipse at top,#54332655,transparent 65%),linear-gradient(180deg,#241a16,#15120f);color:var(--text)}
+h1,h2,h3,.token-name,.od-combat-title{font-family:Georgia,'Times New Roman',serif;letter-spacing:.025em}h1,h2,.cp-section-title,.od-combat-title,.field-label{color:#e0bd7c}
+.hero,.panel,.selected-card,.cp-screen,.card,.controls-card,.status-card,.log-shell,.log-entry{background:#27201a;border-color:#69513a}
+.cp-card,.cp-attr,.cp-skill-card,.od-combat-card{background:#30261f;border-color:#70583d;color:#f2e5ce}
+input,select,textarea,.od-dialog input,.od-dialog select,.od-dialog textarea,.od-combat-card input,.od-combat-card select{background:#191611;color:#f2e5ce;border-color:#765c40;accent-color:#d3ad6b}
+button,.secondary,.cp-pencil,.od-icon-button{background:#483329;border-color:#8c6a44;color:#f4e7cc}button:hover:not(:disabled){background:#654133;border-color:#ddb676}
+.od-dialog{background:#261e18;color:#f2e5ce;border-color:#927047}.od-tooltip{background:#1e1814f5;color:#f4e7cc;border-color:#bc9458}
+.cp-pill,.stat-chip,.combat-value,.od-combat-card .combat-value{background:#3e2c23;color:#ecd5ae;border-color:#80613f}
+.od-combat-panel{background:#191510;border-color:#80613f}.cp-effect{background:#473027;color:#f5dfb9;border-color:#a17b50}
+.cp-attr-val,.cp-mod.good{color:#e1bf7f}.cp-pip.on{background:#d3ad6b}.cp-attr-code,.cp-muted,.muted{color:#c1ae91}
+.danger,.od-icon-button.danger{background:#6e2930;color:#ffd8ce;border-color:#a45658}.od-combat-footer .od-wide-action:first-child{background:#31553f;border-color:#68815a;color:#f2eed9}.od-combat-footer .od-wide-action:last-child:not(:first-child){background:#65402c;border-color:#b28a56;color:#f5e5c8}
+.cp-banner.err,.status.error{background:#4c2324;color:#ffbcb1}.av-magic{border:1px solid #aa8145;border-left:3px solid #d3ad6b}.av-magic [data-mana-current]{color:#e6cd8f}.av-magic [data-attack-fields]{display:grid;gap:10px}
+.od-pool-category .cp-card{background:#30261f}.od-pool-category .od-pool-category{background:#211b16}.od-combat-card .combat-notes,.od-combat-card .muted{color:#c1ae91}.od-target-distance,.od-range-readout{color:#e0bd7c}
+[hidden]{display:none!important}
+
+.status,.hint-box,.panel,.collapsible,.collapsible-body,.collapsible-title{background:#27201a;border-color:#69513a;color:#e9d6b7}.collapsible-title{background:#352820}.role-badge{background:#783f40}.selected-card,.stat-chip,.console-output,.body-table{border-color:#69513a}.console-output{background:#191611}.MuiCardHeader-root{border-bottom:1px solid #69513a}
+
+.avallon-gm .panel{background:#27201af5;border-color:#69513a}.avallon-gm input,.avallon-gm select{background:#191611;color:#f2e5ce;border-color:#765c40}.status.info,.avallon-gm .status.info{background:#493526;color:#eed3a5;border-color:#8d6a41}.cp-pip.on{border-color:#d3ad6b}
+.cp-screen{--accent:#d3ad6b;--panel-soft:#30261f}.cp-screen button.cp-attr{background:#30261f;border-color:#70583d}.cp-screen button.cp-attr:hover,.cp-screen button.cp-skill-card:hover{background:#d3ad6b18;border-color:#d3ad6b}

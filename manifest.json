@@ -1,0 +1,16 @@
+{
+  "name": "Avallon System",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "Avallon System for Owlbear Rodeo",
+  "author": "Codex",
+  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.0.0",
+  "background_url": "https://vvinged1.github.io/Avallon-System/background.html?v=1.0.0",
+  "action": {
+    "title": "Avallon System",
+    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.0.0",
+    "popover": "https://vvinged1.github.io/Avallon-System/index.html?v=1.0.0",
+    "height": 1200,
+    "width": 1200
+  }
+}
