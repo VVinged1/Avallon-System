@@ -393,6 +393,32 @@ var require_events = __commonJS({
   }
 });
 
+// sharedLog.js
+var LOG_KEY = "com.avallon.system/debugLog";
+var LOG_CHANNEL = "com.avallon.system/debug";
+var queues = /* @__PURE__ */ new WeakMap();
+var lastId = 0;
+function createLogEntry(title, body, kind = "info") {
+  lastId = Math.max(Date.now() * 1e3, lastId + 1);
+  return { id: lastId, title, body, kind, timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString() };
+}
+function persistLogEntries(sdk, entries) {
+  const task = (queues.get(sdk) || Promise.resolve()).catch(() => {
+  }).then(async () => {
+    const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
+    for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
+    await sdk.room.setMetadata({ [LOG_KEY]: [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50) });
+  });
+  queues.set(sdk, task);
+  return task;
+}
+async function publishLogEntry(sdk, entry, isGm) {
+  const tasks = [sdk.broadcast.sendMessage(LOG_CHANNEL, { type: "debug-entry", entry }, { destination: "ALL" })];
+  if (isGm) tasks.push(persistLogEntries(sdk, [entry]));
+  const results = await Promise.allSettled(tasks);
+  if (results.every((result) => result.status === "rejected")) throw results[0].reason;
+}
+
 // statusRules.js
 var text = (value, max) => String(value ?? "").trim().slice(0, max);
 var statusDefinition = (ability) => ({ statusName: text(ability?.statusName, 80), statusDescription: text(ability?.statusDescription, 2e3) });
@@ -8392,29 +8418,14 @@ async function initializeCharacterToken(tokenId) {
   return shouldInitialize;
 }
 async function pushDebugEntry(title, body, kind = "info") {
-  const entry = {
-    id: Date.now() * 1e3 + Math.floor(Math.random() * 1e3),
-    title,
-    body,
-    kind,
-    timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString()
-  };
+  const entry = createLogEntry(title, body, kind);
   const metadata = await lib_default.room.getMetadata();
   const nextEntries = mergeDebugEntries([entry], metadata?.[DEBUG_LOG_KEY], debugEntries);
   debugEntries = nextEntries;
   renderDebugConsole();
   characterTools?.syncPool();
   pendingLocalDebugEntryIds.add(entry.id);
-  await lib_default.broadcast.sendMessage(
-    DEBUG_BROADCAST_CHANNEL,
-    { type: "debug-entry", entry },
-    { destination: "ALL" }
-  );
-  if (playerRole === "GM") {
-    await lib_default.room.setMetadata({
-      [DEBUG_LOG_KEY]: nextEntries
-    });
-  }
+  await publishLogEntry(lib_default, entry, playerRole === "GM");
 }
 async function clearDebugConsole() {
   if (playerRole !== "GM") {
@@ -10628,6 +10639,11 @@ async function useNarrativeStatus(sourceId, itemId, abilityId) {
   }));
   await syncState();
   scheduleRender();
+  try {
+    await pushDebugEntry(getCharacterName(actor) + " \xB7 " + result.used.name, result.summary, "success");
+  } catch {
+    result.summary += " \xB7 public log unavailable";
+  }
   return result;
 }
 async function useItemAbility(tokenId, itemId, abilityId) {
@@ -10657,12 +10673,10 @@ async function useItemAbility(tokenId, itemId, abilityId) {
   });
   await syncState();
   scheduleRender();
-  if (used.check) {
-    try {
-      await pushDebugEntry(getCharacterName(getCharacterById(tokenId)) + " \xB7 " + used.name, formatRollSkillDebug({ tokenName: getCharacterName(getCharacterById(tokenId)), skillName: used.name, result: used.check }) + "\nSpent: " + used.cost + " " + used.currency, ["success", "critical-success"].includes(used.check.outcome) ? "success" : "error");
-    } catch {
-      used.summary += " \xB7 public log unavailable";
-    }
+  try {
+    await pushDebugEntry(getCharacterName(actor) + " \xB7 " + used.name, used.check ? formatRollSkillDebug({ tokenName: getCharacterName(actor), skillName: used.name, result: used.check }) + "\nSpent: " + used.cost + " " + used.currency : used.summary, !used.check || ["success", "critical-success"].includes(used.check.outcome) ? "success" : "error");
+  } catch {
+    used.summary += " \xB7 public log unavailable";
   }
   return used;
 }
@@ -11936,9 +11950,7 @@ lib_default.onReady(async () => {
       debugEntries = nextEntries;
       renderDebugConsole();
       if (playerRole === "GM") {
-        void lib_default.room.setMetadata({
-          [DEBUG_LOG_KEY]: nextEntries
-        }).catch((error) => {
+        void persistLogEntries(lib_default, [payload.entry]).catch((error) => {
           console.warn("[Body HP] Unable to persist broadcast debug entry", error);
         });
       }

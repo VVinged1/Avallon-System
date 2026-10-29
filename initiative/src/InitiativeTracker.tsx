@@ -1,3 +1,4 @@
+import {createLogEntry,publishLogEntry} from '../../sharedLog.js';
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import Stack from "@mui/material/Stack";
@@ -248,10 +249,13 @@ export function InitiativeTracker() {
     const items = await OBR.scene.items.getItems();
     const trackedIds = new Set(initiativeItems.map((initiative) => initiative.id));
     const rolls = new Map<string, string>();
+    const logLines: string[] = [];
 
     for (const item of items) {
       if (!trackedIds.has(item.id) || !isTrackableToken(item)) continue;
-      const initiativeRoll = Math.floor(Math.random() * 20) + 1 + getReaction(item,items);
+      const die = Math.floor(Math.random() * 20) + 1, reaction = getReaction(item,items);
+      const initiativeRoll = die + reaction;
+      logLines.push(`${item.name || item.id}: d20 (${die}) + Reaction ${reaction} = ${initiativeRoll}`);
       rolls.set(item.id, String(initiativeRoll));
     }
 
@@ -286,6 +290,8 @@ export function InitiativeTracker() {
       }
     });
 
+    try {await publishLogEntry(OBR,createLogEntry('Initiative · d20 + Reaction',logLines.join('\n'),'success'),true);}
+    catch {setStatus('Initiative saved; public log unavailable.');return;}
     if (nextActiveId) {
       await focusInitiativeItem(nextActiveId);
     }

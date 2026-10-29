@@ -1,3 +1,4 @@
+import {createLogEntry,publishLogEntry,persistLogEntries} from './sharedLog.js';
 import {applyNarrativeAbility} from './narrativeUse.js';
 import {statusView,installStatusTools} from './ui/statusTools.js';
 import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
@@ -662,30 +663,14 @@ function resolveDefaultTargetTokenId(attackerId) {
 }
 
 async function pushDebugEntry(title, body, kind = "info") {
-  const entry = {
-    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
-    title,
-    body,
-    kind,
-    timestamp: new Date().toLocaleTimeString(),
-  };
+  const entry = createLogEntry(title,body,kind);
   const metadata = await OBR.room.getMetadata();
   const nextEntries = mergeDebugEntries([entry], metadata?.[DEBUG_LOG_KEY], debugEntries);
   debugEntries = nextEntries;
   renderDebugConsole();
   characterTools?.syncPool();
   pendingLocalDebugEntryIds.add(entry.id);
-  await OBR.broadcast.sendMessage(
-    DEBUG_BROADCAST_CHANNEL,
-    { type: "debug-entry", entry },
-    { destination: "ALL" },
-  );
-
-  if (playerRole === "GM") {
-    await OBR.room.setMetadata({
-      [DEBUG_LOG_KEY]: nextEntries,
-    });
-  }
+  await publishLogEntry(OBR,entry,playerRole === "GM");
 }
 
 async function clearDebugConsole() {
@@ -4234,7 +4219,9 @@ async function useNarrativeStatus(sourceId,itemId,abilityId){
     result.summary=result.used.name+' → '+getCharacterName(target)+' · '+result.status.name+' · '+result.used.cost+' '+result.used.currency+' spent';
     result.source.lastRoll={eventId:0,actorName:getCharacterName(source),summary:result.summary,outcome:'narrative-status',timestamp:new Date().toISOString(),source:'avallon-extension'};result.source.history=[result.source.lastRoll,...(result.source.history||[])].slice(0,12);
     source.metadata[META_KEY]=sanitizeTrackerData(result.source);if(source!==target)target.metadata[META_KEY]=sanitizeTrackerData(result.target);
-  }));await syncState();scheduleRender();return result;
+  }));await syncState();scheduleRender();
+  try{await pushDebugEntry(getCharacterName(actor)+' · '+result.used.name,result.summary,'success');}catch{result.summary+=' · public log unavailable';}
+  return result;
 }
 async function useItemAbility(tokenId,itemId,abilityId){
   const actor=getCharacterById(tokenId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
@@ -4244,7 +4231,7 @@ async function useItemAbility(tokenId,itemId,abilityId){
         let used,rolled;const modifier=Number(document.querySelector('[data-profile-modifier="skill"]')?.value)||0;
         const rollOnce=(level,mod)=>{if(rolled&&(rolled.baseSkill!==level||rolled.modifier!==mod))throw Error('Ability level changed. Retry the check.');return rolled??=rollSkillCheck(level,mod);};
         await updateTrackerData(tokenId,current=>{const next=structuredClone(current);used=activateImplantAbility(next,itemId,abilityId,{rollSkill:rollOnce,modifier,partName});used.summary=used.name+(used.check?' · '+used.check.totalPrimary+' vs '+used.check.totalSecondary+' ('+used.check.result+')':'')+' · '+used.cost+' '+used.currency+' spent';next.lastRoll={eventId:0,actorName:playerName,summary:used.summary,outcome:used.check?.outcome||'ability-use',...(used.check?{total:used.check.totalPrimary}:{}),timestamp:new Date().toISOString(),source:'avallon-extension'};next.history=[next.lastRoll,...(next.history||[])].slice(0,12);return next;});await syncState();scheduleRender();
-        if(used.check){try{await pushDebugEntry(getCharacterName(getCharacterById(tokenId))+' · '+used.name,formatRollSkillDebug({tokenName:getCharacterName(getCharacterById(tokenId)),skillName:used.name,result:used.check})+'\nSpent: '+used.cost+' '+used.currency,['success','critical-success'].includes(used.check.outcome)?'success':'error');}catch{used.summary+=' · public log unavailable';}}
+        try{await pushDebugEntry(getCharacterName(actor)+' · '+used.name,used.check?formatRollSkillDebug({tokenName:getCharacterName(actor),skillName:used.name,result:used.check})+'\nSpent: '+used.cost+' '+used.currency:used.summary,!used.check||['success','critical-success'].includes(used.check.outcome)?'success':'error');}catch{used.summary+=' · public log unavailable';}
         return used;
       }
 function prepareItemAbilityAttack(id,key){const token=getCharacterById(id);if(!token||!canUseToken(token))throw Error("Character unavailable.");const weapon=implantAttacks(getAvallonData(token)).find(w=>w.selectionKey===key);if(!weapon)throw Error("Item ability unavailable.");syncAttackWeaponInputs(id,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(id,"skill",key);scheduleRender();}
@@ -5589,9 +5576,7 @@ OBR.onReady(async () => {
       renderDebugConsole();
 
       if (playerRole === "GM") {
-        void OBR.room.setMetadata({
-          [DEBUG_LOG_KEY]: nextEntries,
-        }).catch((error) => {
+        void persistLogEntries(OBR,[payload.entry]).catch((error) => {
           console.warn("[Body HP] Unable to persist broadcast debug entry", error);
         });
       }

@@ -1,3 +1,4 @@
+import {persistLogEntries} from '../sharedLog.js';
 import OBR from "@owlbear-rodeo/sdk";
 
 // Shared keys with the main Avallon System extension.
@@ -512,6 +513,10 @@ OBR.onReady(async () => {
       if (payload.type !== "debug-entry") return;
 
       sharedEntries = mergeDebugEntries([payload.entry], sharedEntries);
+      if(viewerRole==='GM')void persistLogEntries(OBR,sanitizeDebugEntries([payload.entry])).catch(error=>{
+        console.warn('[Avallon Combat Log] Unable to save live event',error);
+        setStatus('Live event received; saving to room failed.');
+      });
       setSyncState("Live event");
       setStatus("Received a live Avallon combat event.");
       renderEntries();

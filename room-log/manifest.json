@@ -1,14 +1,14 @@
 {
   "name": "Avallon Combat Log",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "manifest_version": 1,
   "description": "Avallon Combat Log for Owlbear Rodeo",
   "author": "Codex",
-  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.2",
+  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.3",
   "action": {
     "title": "Avallon Combat Log",
-    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.2",
-    "popover": "https://vvinged1.github.io/Avallon-System/room-log/index.html?v=1.3.2",
+    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.3",
+    "popover": "https://vvinged1.github.io/Avallon-System/room-log/index.html?v=1.3.3",
     "height": 780,
     "width": 520
   }

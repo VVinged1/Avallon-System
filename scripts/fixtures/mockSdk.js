@@ -9,6 +9,7 @@ const state={role:'GM',id:'owner',name:'Alex',color:'#54aaff',selection:['hero']
 state.items[1].metadata[metadataKey].avallon.owner={playerId:'other',playerName:'Other'};
 const emit=(callbacks,value)=>callbacks.forEach(fn=>fn(structuredClone(value)));
 const subscribe=list=>fn=>{list.push(fn);return()=>list.splice(list.indexOf(fn),1);};
+state.broadcasts=[];state.broadcastCallbacks=[];
 const noop=async()=>{};
 const player=()=>({role:state.role,id:state.id,name:state.name,color:state.color,selection:state.selection});
 function collection(key,callbacks){return {getItems:async()=>structuredClone(state[key]),onChange:subscribe(callbacks),getItemBounds:async ids=>{const point=state[key].find(i=>ids.includes(i.id))?.position||{x:100,y:100};return {width:100,height:100,center:point,min:{x:point.x-50,y:point.y-50},max:{x:point.x+50,y:point.y+50}};},updateItems:async(ids,updater)=>{const previous=state[key].filter(i=>ids.includes(i.id)),[items]=produceWithPatches(previous,updater);const updates=new Map(items.map(i=>[i.id,i]));state[key]=state[key].map(i=>updates.get(i.id)||i);state.writes++;if(key==='items'&&state.afterItemWrite)await state.afterItemWrite(structuredClone(items));queueMicrotask(()=>emit(callbacks,state[key]));},addItems:async items=>{state[key].push(...structuredClone(items));queueMicrotask(()=>emit(callbacks,state[key]));},deleteItems:async ids=>{state[key]=state[key].filter(i=>!ids.includes(i.id));queueMicrotask(()=>emit(callbacks,state[key]));}};}
@@ -19,7 +20,7 @@ const OBR={isReady:true,isAvailable:true,onReady:fn=>{setTimeout(fn,0);return()=
  scene:{id:'scene',isReady:async()=>true,onReadyChange:subscribe(state.sceneReadyCallbacks),getMetadata:async()=>structuredClone(state.sceneMetadata),setMetadata:async patch=>{if(state.sceneWriteError)throw Error(state.sceneWriteError);Object.assign(state.sceneMetadata,patch);emit(state.sceneMetadataCallbacks,state.sceneMetadata);},onMetadataChange:subscribe(state.sceneMetadataCallbacks),items:collection('items',state.itemCallbacks),local:collection('local',state.localCallbacks),grid:{getDpi:async()=>100,getScale:async()=>({parsed:{multiplier:1,unit:'m',digits:0}}),getDistance:async(a,b)=>Math.max(Math.abs(a.x-b.x),Math.abs(a.y-b.y))/100,onChange:()=>()=>{}}},
  viewport:{getWidth:async()=>1000,getHeight:async()=>800,getScale:async()=>1,transformPoint:async p=>p,inverseTransformPoint:async p=>p,animateTo:noop},
  action:{setWidth:noop,setHeight:noop,setBadgeText:noop},contextMenu:{remove:noop,create:noop},
- broadcast:{sendMessage:noop,onMessage:()=>()=>{}},tool:{remove:noop,removeMode:noop,create:noop,createMode:async mode=>{state.targetMode=mode;},getActiveTool:async()=>'move',getActiveToolMode:async()=>'default',activateTool:noop,activateMode:noop},
+ broadcast:{sendMessage:async(channel,data)=>{state.broadcasts.push({channel,data:structuredClone(data)});},onMessage:(channel,fn)=>{const row={channel,fn};state.broadcastCallbacks.push(row);return()=>state.broadcastCallbacks.splice(state.broadcastCallbacks.indexOf(row),1);}},tool:{remove:noop,removeMode:noop,create:noop,createMode:async mode=>{state.targetMode=mode;},getActiveTool:async()=>'move',getActiveToolMode:async()=>'default',activateTool:noop,activateMode:noop},
  popover:{close:noop,open:async v=>state.popovers.push(v)},
  assets:{uploadScenes:async scenes=>{state.accountScenes=structuredClone(scenes);},downloadScenes:async()=>structuredClone(state.accountScenes)},
 };
@@ -32,5 +33,5 @@ export function buildSceneUpload(){const data={name:'',items:[]};const proxy=new
 export const Command={MOVE:'MOVE',LINE:'LINE',CLOSE:'CLOSE',QUAD:'QUAD',CUBIC:'CUBIC'};
 export const Math2={subtract:(a,b)=>({x:a.x-b.x,y:a.y-b.y}),multiply:(a,n)=>({x:a.x*n,y:a.y*n})};
 export const isImage=item=>item?.type==='IMAGE';
-window.avallonTest={state,setRole(role,id='owner'){state.role=role;state.id=id;emit(state.playerCallbacks,player());},select(id){state.selection=[id];emit(state.playerCallbacks,player());},refresh(){emit(state.itemCallbacks,state.items);},setRoom(patch){Object.assign(state.room,patch);emit(state.roomCallbacks,state.room);},data(id='hero'){return state.items.find(i=>i.id===id).metadata[metadataKey];}};
+window.avallonTest={state,receiveBroadcast(channel,data){for(const row of state.broadcastCallbacks)if(row.channel===channel)row.fn({data:structuredClone(data)});},setRole(role,id='owner'){state.role=role;state.id=id;emit(state.playerCallbacks,player());},select(id){state.selection=[id];emit(state.playerCallbacks,player());},refresh(){emit(state.itemCallbacks,state.items);},setRoom(patch){Object.assign(state.room,patch);emit(state.roomCallbacks,state.room);},data(id='hero'){return state.items.find(i=>i.id===id).metadata[metadataKey];}};
 export default OBR;

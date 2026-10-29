@@ -393,6 +393,20 @@ var require_events = __commonJS({
   }
 });
 
+// sharedLog.js
+var LOG_KEY = "com.avallon.system/debugLog";
+var queues = /* @__PURE__ */ new WeakMap();
+function persistLogEntries(sdk, entries) {
+  const task = (queues.get(sdk) || Promise.resolve()).catch(() => {
+  }).then(async () => {
+    const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
+    for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
+    await sdk.room.setMetadata({ [LOG_KEY]: [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50) });
+  });
+  queues.set(sdk, task);
+  return task;
+}
+
 // node_modules/@owlbear-rodeo/sdk/lib/api/PlayerApi.js
 var __awaiter = function(thisArg, _arguments, P, generator) {
   function adopt(value) {
@@ -3968,6 +3982,10 @@ lib_default.onReady(async () => {
       }
       if (payload.type !== "debug-entry") return;
       sharedEntries = mergeDebugEntries([payload.entry], sharedEntries);
+      if (viewerRole === "GM") void persistLogEntries(lib_default, sanitizeDebugEntries([payload.entry])).catch((error) => {
+        console.warn("[Avallon Combat Log] Unable to save live event", error);
+        setStatus("Live event received; saving to room failed.");
+      });
       setSyncState("Live event");
       setStatus("Received a live Avallon combat event.");
       renderEntries();

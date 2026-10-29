@@ -393,6 +393,32 @@ var require_events = __commonJS({
   }
 });
 
+// sharedLog.js
+var LOG_KEY = "com.avallon.system/debugLog";
+var LOG_CHANNEL = "com.avallon.system/debug";
+var queues = /* @__PURE__ */ new WeakMap();
+var lastId = 0;
+function createLogEntry(title, body, kind = "info") {
+  lastId = Math.max(Date.now() * 1e3, lastId + 1);
+  return { id: lastId, title, body, kind, timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString() };
+}
+function persistLogEntries(sdk, entries) {
+  const task = (queues.get(sdk) || Promise.resolve()).catch(() => {
+  }).then(async () => {
+    const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
+    for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
+    await sdk.room.setMetadata({ [LOG_KEY]: [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50) });
+  });
+  queues.set(sdk, task);
+  return task;
+}
+async function publishLogEntry(sdk, entry, isGm) {
+  const tasks = [sdk.broadcast.sendMessage(LOG_CHANNEL, { type: "debug-entry", entry }, { destination: "ALL" })];
+  if (isGm) tasks.push(persistLogEntries(sdk, [entry]));
+  const results = await Promise.allSettled(tasks);
+  if (results.every((result) => result.status === "rejected")) throw results[0].reason;
+}
+
 // ui/combatLayout.js
 function arrangeCombatPanels(root = document) {
   for (const panel of root.querySelectorAll("[data-combat-layout]:not([data-combat-arranged])")) {
@@ -5256,9 +5282,6 @@ function buildAttackSummary({ part, outcome, damage, attackRoll, attackTotal, de
 }
 
 // gm-extension/main.js
-var DEBUG_LOG_KEY = "com.avallon.system/debugLog";
-var DEBUG_BROADCAST_CHANNEL = "com.avallon.system/debug";
-var DEBUG_ENTRY_LIMIT = 50;
 var TARGET_PICK_TOOL_ID = "com.avallon.system/gm-target-picker";
 var TARGET_PICK_MODE_ID = "pick-gm-target";
 var DEFAULT_TARGET_PART = "Torso";
@@ -5408,46 +5431,12 @@ function formatSkillDebug(label, result) {
     `Second Roll: ${result.rollSecondary} = ${result.totalSecondary}`
   ].join("\n");
 }
-function sanitizeDebugEntries(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((entry) => entry && typeof entry === "object").map((entry) => ({
-    id: Number(entry.id) || Date.now(),
-    title: String(entry.title ?? "Debug"),
-    body: String(entry.body ?? ""),
-    kind: String(entry.kind ?? "info"),
-    timestamp: String(entry.timestamp ?? "")
-  })).slice(0, DEBUG_ENTRY_LIMIT);
-}
-function mergeDebugEntries(...entryGroups) {
-  const merged = /* @__PURE__ */ new Map();
-  for (const group of entryGroups) {
-    for (const entry of sanitizeDebugEntries(group)) {
-      merged.set(entry.id, entry);
-    }
-  }
-  return [...merged.values()].sort((left, right) => Number(right.id) - Number(left.id)).slice(0, DEBUG_ENTRY_LIMIT);
-}
 async function pushSharedLogEntry(title, body, kind = "info") {
   if (playerRole !== "GM") {
     throw new Error("Only the GM can write to the shared Avallon log.");
   }
-  const entry = {
-    id: Date.now() * 1e3 + Math.floor(Math.random() * 1e3),
-    title,
-    body,
-    kind,
-    timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString()
-  };
-  const metadata = await lib_default.room.getMetadata();
-  const nextEntries = mergeDebugEntries([entry], metadata?.[DEBUG_LOG_KEY]);
-  await lib_default.broadcast.sendMessage(
-    DEBUG_BROADCAST_CHANNEL,
-    { type: "debug-entry", entry },
-    { destination: "ALL" }
-  );
-  await lib_default.room.setMetadata({
-    [DEBUG_LOG_KEY]: nextEntries
-  });
+  const entry = createLogEntry(title, body, kind);
+  await publishLogEntry(lib_default, entry, true);
 }
 function pushPrivateEntry(title, body) {
   privateEntries = [

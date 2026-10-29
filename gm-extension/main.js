@@ -1,3 +1,4 @@
+import {createLogEntry,publishLogEntry} from '../sharedLog.js';
 import {arrangeCombatPanels} from '../ui/combatLayout.js';
 import {installCompactButtons} from '../ui/compactButtons.js';
 import {absorbEquipmentCritical,setCombinedPartHp} from '../characterRules.js';
@@ -238,24 +239,9 @@ async function pushSharedLogEntry(title, body, kind = "info") {
     throw new Error("Only the GM can write to the shared Avallon log.");
   }
 
-  const entry = {
-    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
-    title,
-    body,
-    kind,
-    timestamp: new Date().toLocaleTimeString(),
-  };
+  const entry = createLogEntry(title,body,kind);
 
-  const metadata = await OBR.room.getMetadata();
-  const nextEntries = mergeDebugEntries([entry], metadata?.[DEBUG_LOG_KEY]);
-  await OBR.broadcast.sendMessage(
-    DEBUG_BROADCAST_CHANNEL,
-    { type: "debug-entry", entry },
-    { destination: "ALL" },
-  );
-  await OBR.room.setMetadata({
-    [DEBUG_LOG_KEY]: nextEntries,
-  });
+  await publishLogEntry(OBR,entry,true);
 }
 
 function pushPrivateEntry(title, body) {
