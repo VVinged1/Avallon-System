@@ -2,7 +2,7 @@ import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
 import {manaStatus,spendMana,abilityAttacks,activateAbility} from './magicRules.js';
 import {installArtifactTools} from './ui/artifactTools.js';
 import {installMagicTools} from './ui/magicTools.js';
-import {implantAttacks,resolveAbilitySkill,activateImplantAbility} from './implantAbilities.js';
+import {implantAttacks,activateImplantAbility} from './implantAbilities.js';
 import {applyCheckedItemUse,itemUseSummary} from './itemUse.js';
 import {createFieldDrafts,createTokenWriteQueue} from './fieldDrafts.js';
 import {rangeAdjustment,rangeAdjustmentLabel} from './rangeRules.js';
@@ -334,8 +334,7 @@ function getAbilitiesSkillEntries(avallon) {
 
 function getAttackSkillEntries(avallon) {
   const attacks=[...implantAttacks(avallon),...abilityAttacks(avallon)];
-  const assigned=attacks.map(w=>resolveAbilitySkill(avallon,w.boundSkill)).filter(Boolean);
-  return [...new Map([...getCombatSkillEntries(avallon),...getAbilitiesSkillEntries(avallon),...assigned.map(key=>[key,avallon.skills[key]])]).entries()].filter(([key])=>!ATTACK_ONLY_EXCLUDED_SKILLS.has(key)).concat(attacks.map(w=>[w.selectionKey,avallon.skills[resolveAbilitySkill(avallon,w.boundSkill)]||0]));
+  return [...new Map([...getCombatSkillEntries(avallon),...getAbilitiesSkillEntries(avallon)]).entries()].filter(([key])=>!ATTACK_ONLY_EXCLUDED_SKILLS.has(key)).concat(attacks.map(w=>[w.selectionKey,w.level||0]));
 }
 
 function getAppliedSkillEntries(avallon) {
@@ -4276,7 +4275,8 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   if(weaponName?.startsWith('magic:')&&!abilityAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Ability is no longer available. Select an attack.');
   const selectedWeapon = getWeaponByName(attacker, weaponName);
   if((selectedWeapon.magicAbilityId||selectedWeapon.implantId)&&manaStatus(getTrackerData(attacker).avallon).current<(selectedWeapon.cost||0))throw Error('Not enough mana.');
-  if(selectedWeapon.implantId||selectedWeapon.magicAbilityId){skillName=resolveAbilitySkill(attackerAvallon,selectedWeapon.boundSkill);if(!skillName)throw Error('Learn or grant the ability attack skill before attacking.');}
+  if(selectedWeapon.implantId||selectedWeapon.magicAbilityId)skillName=selectedWeapon.selectionKey;
+  const attackSkillValue=(selectedWeapon.implantId||selectedWeapon.magicAbilityId)?selectedWeapon.level||0:attackerAvallon.skills[skillName]||0;
   const shotPrefix = manualDefense ? "data-manual-attack-field" : "data-attack-field";
   const shot = selectedWeapon.rangedIndex == null ? null : getAmmoShot(
     attackerAvallon,
@@ -4402,7 +4402,7 @@ async function performAttackOnce({ manualDefense = false } = {}) {
       : Math.max(Math.floor(baseTargetParry / parryDivisor), 0);
 
   const result = resolveAttack({
-    attackSkill: attackerAvallon.skills[skillName] ?? 0,
+    attackSkill: attackSkillValue,
     weaponDamage: finalWeaponDamage,
     defenseBonuses,
     defensePenalties,
@@ -4455,8 +4455,8 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   await updateTrackerData(attacker.id, (current) => {
     const next = structuredClone(current);
     if(attackerAvallon.pilot?.id&&next.avallon.vehicle?.pilotTokenId!==attackerAvallon.pilot.id)throw Error('Vehicle driver changed. Retry the attack.');
-    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.boundSkill!==selectedWeapon.boundSkill)throw Error('Prosthesis attack changed. Retry the attack.');}
-    if(selectedWeapon.magicAbilityId){const ability=abilityAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.cost!==selectedWeapon.cost||ability.damage!==selectedWeapon.damage||ability.boundSkill!==selectedWeapon.boundSkill)throw Error('Ability changed. Retry.');spendMana(next.avallon,ability.cost);}
+    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.level!==selectedWeapon.level||ability.cost!==selectedWeapon.cost||ability.accuracy!==selectedWeapon.accuracy)throw Error('Prosthesis attack changed. Retry the attack.');}
+    if(selectedWeapon.magicAbilityId){const ability=abilityAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.cost!==selectedWeapon.cost||ability.damage!==selectedWeapon.damage||ability.level!==selectedWeapon.level||ability.cost!==selectedWeapon.cost||ability.accuracy!==selectedWeapon.accuracy)throw Error('Ability changed. Retry.');spendMana(next.avallon,ability.cost);}
     if(selectedWeapon.implantId)spendMana(next.avallon,selectedWeapon.cost||0);
     if (shot) {
       if (next.avallon.weapons.ranged[selectedWeapon.rangedIndex]?.id !== selectedWeapon.id) throw new Error("Weapon changed. Please retry the attack.");
@@ -4516,8 +4516,8 @@ async function performAttackOnce({ manualDefense = false } = {}) {
       attackerName: getCharacterName(attacker),
       targetName: resolvedTargetName,
       targetPart,
-      attackSkillName: skillName,
-      attackSkillValue: attackerAvallon.skills[skillName] ?? 0,
+      attackSkillName: (selectedWeapon.magicAbilityId||selectedWeapon.implantId)?selectedWeapon.name:skillName,
+      attackSkillValue,
       weaponDamage: finalWeaponDamage,
       weaponAccuracy,
       strengthBonus,
