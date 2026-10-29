@@ -315,10 +315,10 @@ export function sanitizeAvallonData(raw) {
     Number(DEFAULT_AVALLON_SKILLS[PARRY_SKILL_NAME] ?? 0) || 0,
   );
 
-  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 5);
+  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 10);
   next.skillCategories[MELEE_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[MELEE_SKILL_NAME] = true;
-  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 5);
+  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 10);
   next.skillCategories[PARRY_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[PARRY_SKILL_NAME] = false;
 

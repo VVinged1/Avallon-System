@@ -395,7 +395,7 @@ var require_events = __commonJS({
 
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
-var skillCap = (category) => category === "passive" ? 1 : ["social", "control"].includes(category) ? 3 : 5;
+var skillCap = () => 10;
 var normalizeSkillCategory = (value) => SKILL_CATEGORIES.some(([key]) => key === value) ? value : "applied";
 
 // rangeRules.js
@@ -658,7 +658,7 @@ var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2
 var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
 function normalizeAbilities(raw) {
   const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(5, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
+  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 function manaStatus(o) {
   const max = Math.max(0, (o.baseAttributes ? o : effectiveAvallon(o)).attributes.Magic || 0);
@@ -868,7 +868,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 5), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),
@@ -1401,13 +1401,13 @@ function manaRow(o, gm) {
 function abilityRows(o, gm) {
   const pool = manaStatus(o), rows2 = o.abilities || [];
   if (!rows2.length) return "";
-  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + "><span><b>" + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 level " + a.level + "/5 \xB7 " + a.cost + " mana</span></span>" + (a.kind === "attack" ? '<span class="cp-muted">DMG ' + a.damage + "</span>" : "") + "</button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
+  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + "><span><b>" + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 level " + a.level + "/10 \xB7 " + a.cost + " mana</span></span>" + (a.kind === "attack" ? '<span class="cp-muted">DMG ' + a.damage + "</span>" : "") + "</button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
 }
 function abilityEditor(existing = {}, skills = []) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
   const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
-  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="5" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Utility</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
+  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="10" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Utility</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
   const form = dialog.querySelector("form");
   form.elements.kind.value = existing.kind || "utility";
   const toggle = () => {
@@ -1754,7 +1754,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
   }
   function abilityRow(a = {}) {
     const kind = a.kind || "skill";
-    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '">' + field("abilityName", "Ability", a.name || "") + field("abilityCost", "Mana cost", a.cost || 0, "number") + select("abilityKind", "Ability type", [["skill", "Granted skill"], ["bonus", "Activate bonuses"], ["attack", "Attack"]], kind) + field("abilityLevel", "Skill level", a.level || 0, "number", 5) + (kind === "skill" ? "" : kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ATTRIBUTES.map((k) => field("abilityAttr:" + k, k, a.bonuses?.attributes?.[k] || 0, "number")).join("") + "<div data-ability-bonus-skills>" + Object.entries(a.bonuses?.skills || {}).map(([k, v]) => abilityBonusSkill(k, v)).join("") + '</div><button type="button" data-add-ability-bonus>Add skill bonus</button>') + field("abilityDescription", "Description", a.description || "") + '<button type="button" data-remove-ability aria-label="Remove ability">\xD7</button></fieldset>';
+    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '">' + field("abilityName", "Ability", a.name || "") + field("abilityCost", "Mana cost", a.cost || 0, "number") + select("abilityKind", "Ability type", [["skill", "Granted skill"], ["bonus", "Activate bonuses"], ["attack", "Attack"]], kind) + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ATTRIBUTES.map((k) => field("abilityAttr:" + k, k, a.bonuses?.attributes?.[k] || 0, "number")).join("") + "<div data-ability-bonus-skills>" + Object.entries(a.bonuses?.skills || {}).map(([k, v]) => abilityBonusSkill(k, v)).join("") + '</div><button type="button" data-add-ability-bonus>Add skill bonus</button>') + field("abilityDescription", "Description", a.description || "") + '<button type="button" data-remove-ability aria-label="Remove ability">\xD7</button></fieldset>';
   }
   function readAbilityRow(row) {
     const previous = abilityDrafts.get(row.dataset.abilityId) || {}, get2 = (name, fallback = "") => row.querySelector('[name="' + name + '"]')?.value ?? fallback;
@@ -6955,10 +6955,10 @@ function sanitizeAvallonData(raw) {
     Number(raw.attributes?.Parry ?? 0) || 0,
     Number(DEFAULT_AVALLON_SKILLS[PARRY_SKILL_NAME] ?? 0) || 0
   );
-  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 5);
+  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 10);
   next.skillCategories[MELEE_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[MELEE_SKILL_NAME] = true;
-  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 5);
+  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 10);
   next.skillCategories[PARRY_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[PARRY_SKILL_NAME] = false;
   for (const [key, value] of Object.entries(rawSkills)) {

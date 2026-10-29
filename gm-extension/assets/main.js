@@ -577,7 +577,7 @@ function installCompactButtons() {
 
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
-var skillCap = (category) => category === "passive" ? 1 : ["social", "control"].includes(category) ? 3 : 5;
+var skillCap = () => 10;
 var normalizeSkillCategory = (value) => SKILL_CATEGORIES.some(([key]) => key === value) ? value : "applied";
 
 // rangeRules.js
@@ -776,7 +776,7 @@ var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2
 var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
 function normalizeAbilities(raw) {
   const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(5, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
+  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 
 // itemGroups.js
@@ -855,7 +855,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 5), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),
@@ -4493,10 +4493,10 @@ function sanitizeAvallonData(raw) {
     Number(raw.attributes?.Parry ?? 0) || 0,
     Number(DEFAULT_AVALLON_SKILLS[PARRY_SKILL_NAME] ?? 0) || 0
   );
-  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 5);
+  next.skills[MELEE_SKILL_NAME] = clamp(migratedMeleeValue, 0, 10);
   next.skillCategories[MELEE_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[MELEE_SKILL_NAME] = true;
-  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 5);
+  next.skills[PARRY_SKILL_NAME] = clamp(migratedParryValue, 0, 10);
   next.skillCategories[PARRY_SKILL_NAME] = COMBAT_SKILL_CATEGORY;
   next.skillStrengthBonuses[PARRY_SKILL_NAME] = false;
   for (const [key, value] of Object.entries(rawSkills)) {
