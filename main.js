@@ -12,7 +12,7 @@ import {installCompactButtons} from './ui/compactButtons.js';
 import {ARMOR_TRAINING,useItemOnTracker,absorbEquipmentCritical,setCombinedPartHp,setCombinedPartMax,reconcileEquipment} from './characterRules.js';
 import { compactHud } from "./ui/compactHud.js";
 import { attributeCards, skillCards, effectChips } from "./ui/characterView.js";
-import { installCharacterTools } from "./ui/characterTools.js";
+import { installCharacterTools,formDialog } from "./ui/characterTools.js";
 import { profileData } from "./profiles.js";
 import { Command, buildImage, buildPath, buildRuler } from "@owlbear-rodeo/sdk";
 import { reloadMagazine, getAmmoShot, consumeAmmo, effectiveArmor } from "./ammunition.js";
@@ -4217,6 +4217,18 @@ function getActionFieldValue(selector) {
   return field.value;
 }
 
+async function useItemAbility(tokenId,itemId,abilityId){
+  const actor=getCharacterById(tokenId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
+  const tracker=getTrackerData(actor),source=checkItemAbilityCost(tracker,itemId,abilityId);let partName='';
+  if(source.ability.kind==='heal'){const choice=await formDialog('Use '+source.ability.name,[{name:'part',label:'Body part',options:Object.entries(tracker.body).filter(([,p])=>isEditable()||!p.hidden).map(([key,p])=>[key,p.label||key])}],{submitLabel:'Use charges'});if(!choice)return null;partName=choice.part;}
+
+        let used,rolled;const modifier=Number(document.querySelector('[data-profile-modifier="skill"]')?.value)||0;
+        const rollOnce=(level,mod)=>{if(rolled&&(rolled.baseSkill!==level||rolled.modifier!==mod))throw Error('Ability level changed. Retry the check.');return rolled??=rollSkillCheck(level,mod);};
+        await updateTrackerData(tokenId,current=>{const next=structuredClone(current);used=activateImplantAbility(next,itemId,abilityId,{rollSkill:rollOnce,modifier,partName});used.summary=used.name+(used.check?' · '+used.check.totalPrimary+' vs '+used.check.totalSecondary+' ('+used.check.result+')':'')+' · '+used.cost+' '+used.currency+' spent';next.lastRoll={eventId:0,actorName:playerName,summary:used.summary,outcome:used.check?.outcome||'ability-use',...(used.check?{total:used.check.totalPrimary}:{}),timestamp:new Date().toISOString(),source:'avallon-extension'};next.history=[next.lastRoll,...(next.history||[])].slice(0,12);return next;});await syncState();scheduleRender();
+        if(used.check){try{await pushDebugEntry(getCharacterName(getCharacterById(tokenId))+' · '+used.name,formatRollSkillDebug({tokenName:getCharacterName(getCharacterById(tokenId)),skillName:used.name,result:used.check})+'\nSpent: '+used.cost+' '+used.currency,['success','critical-success'].includes(used.check.outcome)?'success':'error');}catch{used.summary+=' · public log unavailable';}}
+        return used;
+      }
+function prepareItemAbilityAttack(id,key){const token=getCharacterById(id);if(!token||!canUseToken(token))throw Error("Character unavailable.");const weapon=implantAttacks(getAvallonData(token)).find(w=>w.selectionKey===key);if(!weapon)throw Error("Item ability unavailable.");syncAttackWeaponInputs(id,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(id,"skill",key);scheduleRender();}
 let attackPending = false;
 async function performAttack(options = {}) {
   if (attackPending) return;
@@ -5477,7 +5489,7 @@ OBR.onReady(async () => {
       defaultHeight: 860,
     });
     characterTools = installCharacterTools({OBR, sanitize:sanitizeTrackerData, tracker:getTrackerData,
-      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:async(tokenId,itemId,abilityId)=>{await updateTrackerData(tokenId,current=>{const next=structuredClone(current);const used=activateImplantAbility(next,itemId,abilityId);next.lastRoll={eventId:0,actorName:playerName,summary:used.name+' · '+used.cost+' '+used.currency+' spent',outcome:'ability-use',timestamp:new Date().toISOString(),source:'avallon-extension'};next.history=[next.lastRoll,...(next.history||[])].slice(0,12);return next;});await syncState();scheduleRender();}, setVehicle:setVehicleState, selectImplantAttack:(tokenId,key)=>{const token=getCharacterById(tokenId),weapon=getWeaponByName(token,key);syncAttackWeaponInputs(tokenId,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(tokenId,'skill',key);scheduleRender();}, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
+      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:useItemAbility, setVehicle:setVehicleState, selectImplantAttack:prepareItemAbilityAttack, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
       canControl:canUseToken, update:updateTrackerData, refreshOverlay:ensureOverlayForToken,
       render:scheduleRender, status:setStatus, download:downloadTextFile,
       resetDraft:id => { pendingFieldDrafts.clear(id);attackFormDrafts.delete(id); for (const [key,timer] of inputAutosaveTimers) { if (key.startsWith(id+"|")) {clearTimeout(timer);inputAutosaveTimers.delete(key);} } },
@@ -5486,7 +5498,7 @@ OBR.onReady(async () => {
     OBR.scene.grid.onChange(()=>{targetDistance.invalidate();refreshTargetDistance();});
     window.addEventListener('beforeunload',()=>{void targetDistance.clear();});
     new MutationObserver(()=>paintAbilityAttackFields()).observe(ui.selectedTokenPanel,{childList:true,subtree:true});
-    installArtifactTools({getToken:id=>getCharacterById(id??activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,update:updateTrackerData,render:scheduleRender,status:setStatus});
+    installArtifactTools({useAbility:useItemAbility,prepareAbility:prepareItemAbilityAttack,getToken:id=>getCharacterById(id??activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,update:updateTrackerData,render:scheduleRender,status:setStatus});
     installMagicTools({getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
     bindUiEvents();
     await removeAttackTargetContextMenu();

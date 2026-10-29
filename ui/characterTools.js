@@ -91,7 +91,7 @@ export function installCharacterTools(host) {
     const gmActions=['add-item','edit-item','delete-item','apply-template'];
     if(action==='open-item-pool')check(tokenId,true);
     if(gmActions.includes(action)||action.includes('template')||action.includes('library')||action.startsWith('account-')) check(tokenId,true);
-    if(action==='activate-implant'){await host.activateAbility(tokenId,id,node.dataset.abilityId);status('Item ability used.','success');return;}
+    if(action==='activate-implant'){const used=await host.activateAbility(tokenId,id,node.dataset.abilityId);if(!used)return;status(used?.summary||'Item ability used.',used?.check&&!['success','critical-success'].includes(used.check.outcome)?'error':'success');return;}
     if(action==='implant-attack'){host.selectImplantAttack(tokenId,node.dataset.key);status('Item ability selected. Choose a target in Attack.','success');return;}
     if(action==='add-item'||action==='edit-entry') {
       check(tokenId,true);const t=host.tracker(token),o=t.avallon,type=node.dataset.entryType||'item';

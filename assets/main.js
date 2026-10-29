@@ -766,30 +766,70 @@ function installDescriptions() {
   });
 }
 
+// implantAbilities.js
+function activeImplantAbilities(o) {
+  return (o.inventory?.items || []).filter(itemAbilityAvailable).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus", "utility", "check", "mana", "heal"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
+}
+function implantAttacks(o) {
+  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, level: ability.level || 0, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0, resourceType: item.kind === "artifact" ? "charges" : "mana" }));
+}
+function checkItemAbilityCost(tracker, itemId, abilityId) {
+  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId);
+  if (!row) throw Error("Item ability is unavailable. Carry the resource or equip the item.");
+  const cost = Math.max(0, Number(row.ability.cost) || 0), currency = row.item.kind === "artifact" ? "charges" : "mana", available = currency === "charges" ? row.item.charges : manaStatus(tracker.avallon).current;
+  if (available < cost) throw Error(currency === "charges" ? "Not enough artifact charges." : "Not enough mana.");
+  return { ...row, cost, currency };
+}
+function spendItemAbilityCost(tracker, itemId, abilityId) {
+  const row = checkItemAbilityCost(tracker, itemId, abilityId);
+  if (row.currency === "charges") row.item.charges = Math.round((row.item.charges - row.cost) * 2) / 2;
+  else spendMana(tracker.avallon, row.cost);
+  return row;
+}
+function activateImplantAbility(tracker, itemId, abilityId, { rollSkill, modifier: modifier2 = 0, partName = "" } = {}) {
+  var _a;
+  const row = checkItemAbilityCost(tracker, itemId, abilityId);
+  if (row.ability.kind === "attack") throw Error("Choose the ability in Attack.");
+  const effect = { id: "implant-effect:" + itemId + ":" + abilityId, name: row.item.name + " \xB7 " + row.ability.name, sourceItemId: itemId, bonuses: normalizeBonuses(row.ability.bonuses) };
+  (_a = tracker.avallon).effects ?? (_a.effects = []);
+  if (row.ability.kind === "bonus") {
+    if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
+    if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
+  }
+  if (row.ability.kind === "check" && typeof rollSkill !== "function") throw Error("Skill check resolver is unavailable.");
+  const check = row.ability.kind === "check" ? rollSkill(row.ability.level || 0, modifier2) : null;
+  if (row.ability.kind === "mana") {
+    const pool = manaStatus(tracker.avallon);
+    if (!row.ability.effectAmount || pool.current >= pool.max) throw Error("No mana to restore.");
+    setMana(tracker.avallon, Math.min(pool.max, pool.current + row.ability.effectAmount));
+  }
+  if (row.ability.kind === "heal") useItemOnTracker(tracker, { subtype: "medkit", healCritical: Math.floor(row.ability.effectAmount) }, partName, effect.id);
+  spendItemAbilityCost(tracker, itemId, abilityId);
+  if (row.ability.kind === "bonus") tracker.avallon.effects.push(effect);
+  return { ...effect, cost: row.cost, currency: row.currency, ...check ? { check } : {} };
+}
+
 // artifactRules.js
-var count = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
+var half2 = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
 function normalizeArtifact(raw = {}) {
-  const chargeMax = count(raw.chargeMax);
-  return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
+  const chargeMax = half2(raw.chargeMax);
+  return { chargeMax, charges: half2(raw.charges ?? chargeMax, chargeMax), artifactEffect: "property" };
+}
+function artifactAbilities(raw = {}) {
+  const rows2 = structuredClone(Array.isArray(raw.abilities) ? raw.abilities : []);
+  if (["mana", "heal", "bonus"].includes(raw.artifactEffect)) {
+    let id = "artifact-default";
+    while (rows2.some((a) => a.id === id)) id += "-legacy";
+    rows2.push({ id, legacyDefault: true, name: { mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses" }[raw.artifactEffect], kind: raw.artifactEffect, level: 0, cost: half2(raw.chargeCost ?? 1), effectAmount: half2(raw.effectAmount), bonuses: raw.activeBonuses, description: "Converted from the artifact\u2019s former default action." });
+  }
+  return rows2;
 }
 function useArtifact(tracker, id, partName = "") {
-  const item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact" && i.quantity > 0);
-  if (!item || !item.equippedPart) throw Error("Equip the artifact before using it.");
-  if (item.artifactEffect === "property") throw Error("This artifact grants a passive property.");
-  if (item.charges < item.chargeCost) throw Error("Not enough artifact charges.");
-  const effectId = "artifact-effect:" + id;
-  if (item.artifactEffect === "mana") {
-    const pool = manaStatus(tracker.avallon);
-    if (!item.effectAmount || pool.current >= pool.max) throw Error("No mana to restore.");
-    setMana(tracker.avallon, Math.min(pool.max, pool.current + item.effectAmount));
-  } else if (item.artifactEffect === "heal") {
-    useItemOnTracker(tracker, { subtype: "medkit", healCritical: Math.floor(item.effectAmount) }, partName, effectId);
-  } else {
-    if (tracker.avallon.effects.some((e) => e.id === effectId)) throw Error("Artifact effect is already active.");
-    if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
-    tracker.avallon.effects.push({ id: effectId, name: item.name, sourceItemId: id, bonuses: normalizeBonuses(item.activeBonuses) });
-  }
-  item.charges -= item.chargeCost;
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact");
+  if (!item?.equippedPart) throw Error("Equip the artifact before using it.");
+  const ability = item.abilities.find((a) => a.legacyDefault);
+  if (!ability) throw Error("Choose an artifact ability.");
+  activateImplantAbility(tracker, id, ability.id, { partName });
   return item;
 }
 
@@ -871,7 +911,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),
@@ -1013,7 +1053,7 @@ function saveInventoryEntry(tracker, origin, values, id) {
     return;
   }
   if (same?.equippedPart && !["armor", "shield", "prosthesis", "artifact"].includes(kind)) unequipItem(tracker, id, true);
-  const row = { ...values, ...kind === "artifact" ? normalizeArtifact(values) : {}, id, quantity: Number(values.quantity) || 0, armor: Number(values.armor) || 0, healCritical: Number(values.healCritical) || 0, criticalMax: Number(values.criticalMax) || 0, criticalDamage: Number(values.criticalDamage) || 0, playerRemovable: values.playerRemovable === true, legacyEquipment: false, equippedPart: same?.equippedPart || "", previousArmor: same?.previousArmor || 0 };
+  const row = { ...values, id, quantity: Number(values.quantity) || 0, armor: Number(values.armor) || 0, healCritical: Number(values.healCritical) || 0, criticalMax: Number(values.criticalMax) || 0, criticalDamage: Number(values.criticalDamage) || 0, playerRemovable: values.playerRemovable === true, legacyEquipment: false, equippedPart: same?.equippedPart || "", previousArmor: same?.previousArmor || 0 };
   if (!["armor", "shield", "prosthesis"].includes(kind)) {
     row.armor = 0;
     row.criticalMax = 0;
@@ -1538,41 +1578,6 @@ function installMagicTools(host) {
   });
 }
 
-// implantAbilities.js
-function activeImplantAbilities(o) {
-  return (o.inventory?.items || []).filter(itemAbilityAvailable).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus", "utility"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
-}
-function implantAttacks(o) {
-  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, level: ability.level || 0, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0, resourceType: item.kind === "artifact" ? "charges" : "mana" }));
-}
-function checkItemAbilityCost(tracker, itemId, abilityId) {
-  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId);
-  if (!row) throw Error("Item ability is unavailable. Carry the resource or equip the item.");
-  const cost = Math.max(0, Number(row.ability.cost) || 0), currency = row.item.kind === "artifact" ? "charges" : "mana", available = currency === "charges" ? row.item.charges : manaStatus(tracker.avallon).current;
-  if (available < cost) throw Error(currency === "charges" ? "Not enough artifact charges." : "Not enough mana.");
-  return { ...row, cost, currency };
-}
-function spendItemAbilityCost(tracker, itemId, abilityId) {
-  const row = checkItemAbilityCost(tracker, itemId, abilityId);
-  if (row.currency === "charges") row.item.charges = Math.round((row.item.charges - row.cost) * 2) / 2;
-  else spendMana(tracker.avallon, row.cost);
-  return row;
-}
-function activateImplantAbility(tracker, itemId, abilityId) {
-  var _a;
-  const row = checkItemAbilityCost(tracker, itemId, abilityId);
-  if (row.ability.kind === "attack") throw Error("Choose the ability in Attack.");
-  const effect = { id: "implant-effect:" + itemId + ":" + abilityId, name: row.item.name + " \xB7 " + row.ability.name, sourceItemId: itemId, bonuses: normalizeBonuses(row.ability.bonuses) };
-  (_a = tracker.avallon).effects ?? (_a.effects = []);
-  if (row.ability.kind === "bonus") {
-    if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
-    if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
-  }
-  spendItemAbilityCost(tracker, itemId, abilityId);
-  if (row.ability.kind === "bonus") tracker.avallon.effects.push(effect);
-  return { ...effect, cost: row.cost, currency: row.currency };
-}
-
 // ui/characterView.js
 var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
@@ -1603,7 +1608,7 @@ function inventoryView(tracker, gm) {
     const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
     let controls = "";
     if (i.kind === "artifact") {
-      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>" + (i.equippedPart && i.artifactEffect !== "property" ? '<button type="button" data-artifact-action="use" data-id="' + esc(i.id) + '" ' + (i.charges < i.chargeCost ? "disabled" : "") + ">Use \xB7 " + i.chargeCost + " charges</button>" : "");
+      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>";
     } else if (equipment) {
       const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
       if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
@@ -1613,7 +1618,7 @@ function inventoryView(tracker, gm) {
         controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
       }
     } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
-    return '<article class="cp-card"><div class="cp-row"><b>' + esc(i.name) + '</b><span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
+    return '<article class="cp-card"' + (i.kind === "artifact" ? ' data-artifact-open="' + esc(i.id) + '"' : "") + '><div class="cp-row">' + (i.kind === "artifact" ? '<button type="button" class="cp-item-open cp-skill-card" data-artifact-action="menu" data-id="' + esc(i.id) + '" aria-label="Open ' + esc(i.name) + ' actions"><b>' + esc(i.name) + "</b></button>" : "<b>" + esc(i.name) + "</b>") + '<span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
   };
   const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
   const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
@@ -1638,7 +1643,8 @@ function prosthesisAbilityRows(o) {
   if (!rows2.length) return "";
   return '<div class="cp-section-title">Item abilities</div>' + rows2.map(({ item, ability, key }) => {
     const currency = item.kind === "artifact" ? "charges" : "mana", cost = ability.cost || 0, available = currency === "charges" ? item.charges : manaStatus(o).current, active = (o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id);
-    return '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + '</span><span class="cp-pill">' + (ability.level || 0) + "/10 \xB7 " + cost + " " + currency + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '" ' + (available < cost ? "disabled" : "") + ">Prepare attack</button>" : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost || ability.kind === "bonus" && active ? "disabled" : "") + ">" + (ability.kind === "bonus" ? "Activate bonuses" : "Use ability") + "</button>") + "</article>";
+    if (ability.kind === "check") return '<div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost ? "disabled" : "") + "><span><b>" + esc(ability.name) + '</b><small class="cp-muted"> \xB7 ' + esc(item.name) + '</small></span><span class="cp-skill-level"><strong>' + (ability.level || 0) + '/10</strong><span class="cp-pill">' + cost + " " + currency + "</span></span></button>" + descriptionButton(ability.name, ability.description) + "</div>";
+    return '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + '</span><span class="cp-pill">' + (ability.level || 0) + "/10 \xB7 " + cost + " " + currency + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '" ' + (available < cost ? "disabled" : "") + ">Prepare attack</button>" : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost || ability.kind === "bonus" && active ? "disabled" : "") + ">" + (ability.kind === "bonus" ? "Activate bonuses" : ability.kind === "mana" ? "Restore mana" : ability.kind === "heal" ? "Heal body HP" : "Use ability") + "</button>") + "</article>";
   }).join("");
 }
 
@@ -1815,7 +1821,7 @@ var ITEM_TYPES = [["consumable", "Usable"], ["resource", "Resource"], ["ammo", "
 function itemEditor({ existing = {}, type = "resource", skills = [], parts = [], ammunition = [] }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
-  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "effectAmount", "chargeMax", "charges", "chargeCost"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
+  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "abilityAmount", "effectAmount", "chargeMax", "charges", "chargeCost"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
   const select = (name, label, options, value) => `<label>${esc(label)}<select name="${name}">${options.map(([k, l]) => `<option value="${esc(k)}" ${k === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
   const checkbox = (name, label, checked) => `<label class="od-check"><input name="${name}" type="checkbox" ${checked ? "checked" : ""}>${esc(label)}</label>`;
   const values = { ...existing, kind: type, acceptsMagazines: false };
@@ -1846,12 +1852,12 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
   const abilityDrafts = new Map((existing.abilities || []).map((a) => [a.id, structuredClone(a)]));
   function abilityRow(a = {}) {
     const kind = a.kind || (a.id ? "skill" : "utility"), currency = values.kind === "artifact" ? "Charge cost" : "Mana cost";
-    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["utility", "Use property"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"]], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
+    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["check", "Skill check"], ["utility", "Use property"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"], ...values.kind === "artifact" ? [["mana", "Restore mana"], ["heal", "Heal body HP"]] : []], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ["mana", "heal"].includes(kind) ? field("abilityAmount", kind === "mana" ? "Mana restored" : "Body HP restored", a.effectAmount || 1, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
   }
   function readAbilityRow(row) {
     const previous = abilityDrafts.get(row.dataset.abilityId) || {}, get2 = (name, fallback = "") => row.querySelector('[name="' + name + '"]')?.value ?? fallback;
     const bonusRoot = row.querySelector('[data-bonus-editor="ability"]'), bonuses = bonusRoot ? readCompactBonuses(bonusRoot) : structuredClone(previous.bonuses || { attributes: {}, skills: {} });
-    const ability = { id: row.dataset.abilityId, name: get2("abilityName"), kind: get2("abilityKind"), cost: Number(get2("abilityCost", previous.cost)) || 0, level: Number(get2("abilityLevel", previous.level)) || 0, description: get2("abilityDescription"), damage: Number(get2("abilityDamage", previous.damage)) || 0, accuracy: Number(get2("abilityAccuracy", previous.accuracy)) || 0, bonuses };
+    const ability = { id: row.dataset.abilityId, name: get2("abilityName"), kind: get2("abilityKind"), cost: Number(get2("abilityCost", previous.cost)) || 0, ...previous.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Number(get2("abilityAmount", previous.effectAmount)) || 0, level: Number(get2("abilityLevel", previous.level)) || 0, description: get2("abilityDescription"), damage: Number(get2("abilityDamage", previous.damage)) || 0, accuracy: Number(get2("abilityAccuracy", previous.accuracy)) || 0, bonuses };
     abilityDrafts.set(ability.id, ability);
     return ability;
   }
@@ -1886,11 +1892,8 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     }
     if (kind === "resource") html += bonusEditor(values.bonuses, true, false);
     if (kind === "artifact") {
-      html += field("chargeMax", "Maximum charges", values.chargeMax ?? 5, "number") + field("charges", "Current charges \xB7 GM correction", values.charges ?? values.chargeMax ?? 5, "number") + field("chargeCost", "Default action \xB7 charge cost", values.chargeCost ?? 1, "number") + select("artifactEffect", "Default action", [["property", "No default action / passive property"], ["mana", "Restore mana"], ["heal", "Heal body HP"], ["bonus", "Activate bonuses"]], values.artifactEffect || "property");
-      if (["mana", "heal"].includes(values.artifactEffect)) html += field("effectAmount", values.artifactEffect === "mana" ? "Mana restored" : "Critical wounds restored", values.effectAmount ?? 1, "number");
-      html += bonusEditor(values.bonuses, true, false);
-      if (values.artifactEffect === "bonus") html += compactBonusEditor(values.activeBonuses, skillChoices, { prefix: "active", label: "Active bonuses \xB7 spend charges" });
-      html += '<p class="cp-muted">Passive bonuses and properties work while equipped. Active effects use this artifact\u2019s charges. The GM restores charges manually. Healing affects body wounds, not armor.</p>';
+      html += '<div class="od-artifact-charge-fields">' + field("chargeMax", "Maximum charges", values.chargeMax ?? 5, "number") + field("charges", "Current charges \xB7 GM correction", values.charges ?? values.chargeMax ?? 5, "number") + "</div>" + bonusEditor(values.bonuses, true, false);
+      html += '<p class="cp-muted">All abilities share these charges. Set the cost separately on each ability.</p>';
     }
     if (kind === "ammo") html += field("damage", "Damage / round", values.damage ?? 0, "number") + field("penetration", "Armor penetration", values.penetration ?? 0, "number");
     if (kind === "weapon") {
@@ -2048,22 +2051,22 @@ function reloadMagazine(avallon, weaponIndex, ammoId) {
     previous.quantity += weapon.loaded;
     weapon.loaded = 0;
   }
-  const count2 = Math.min(weapon.capacity - weapon.loaded, ammo.quantity);
-  if (count2 <= 0) throw new Error("Internal capacity is full or ammo reserve is empty.");
+  const count = Math.min(weapon.capacity - weapon.loaded, ammo.quantity);
+  if (count <= 0) throw new Error("Internal capacity is full or ammo reserve is empty.");
   weapon.loadedAmmoId = ammoId;
-  weapon.loaded += count2;
-  ammo.quantity -= count2;
+  weapon.loaded += count;
+  ammo.quantity -= count;
 }
-function getAmmoShot(avallon, weaponIndex, ammoId, count2) {
+function getAmmoShot(avallon, weaponIndex, ammoId, count) {
   const weapon = avallon.weapons.ranged[weaponIndex];
   const ammo = avallon.ammunition.find((item) => item.id === ammoId);
   if (!weapon || !ammo || !weapon.ammoIds.includes(ammoId) || weapon.loadedAmmoId !== ammoId) {
     throw new Error("The selected ammunition must be loaded by the GM first.");
   }
-  if (!Number.isInteger(count2) || count2 < 1 || count2 > weapon.loaded || count2 > weapon.capacity) {
+  if (!Number.isInteger(count) || count < 1 || count > weapon.loaded || count > weapon.capacity) {
     throw new Error("Not enough rounds in the weapon.");
   }
-  return { ammoId, count: count2, damage: ammo.damage * count2, penetration: ammo.penetration, name: ammo.name };
+  return { ammoId, count, damage: ammo.damage * count, penetration: ammo.penetration, name: ammo.name };
 }
 function consumeAmmo(avallon, weaponIndex, shot) {
   getAmmoShot(avallon, weaponIndex, shot.ammoId, shot.count);
@@ -5872,7 +5875,7 @@ function installCharacterTools(host) {
   const putBlueprints = async (blueprints, automatic = false) => {
     await requirePoolGM();
     const metadata = await readPool(), patch = {};
-    let count2 = Object.entries(metadata).filter(([key, value]) => key.startsWith(ITEM_POOL_PREFIX) && value && !value.deleted).length;
+    let count = Object.entries(metadata).filter(([key, value]) => key.startsWith(ITEM_POOL_PREFIX) && value && !value.deleted).length;
     for (const blueprint of blueprints) {
       validateBlueprint(blueprint);
       const text2 = blueprintText(blueprint);
@@ -5884,7 +5887,7 @@ function installCharacterTools(host) {
       const key = ITEM_POOL_PREFIX + id;
       if (metadata[key] && (automatic || !metadata[key].deleted)) continue;
       if (Object.hasOwn(patch, key)) continue;
-      if ((!metadata[key] || metadata[key].deleted) && ++count2 > 2e3) throw new Error("Campaign item pool is full. Export a backup and remove unused definitions.");
+      if ((!metadata[key] || metadata[key].deleted) && ++count > 2e3) throw new Error("Campaign item pool is full. Export a backup and remove unused definitions.");
       patch[key] = { blueprint };
     }
     await requirePoolGM();
@@ -6011,8 +6014,9 @@ function installCharacterTools(host) {
     if (action === "open-item-pool") check(tokenId, true);
     if (gmActions.includes(action) || action.includes("template") || action.includes("library") || action.startsWith("account-")) check(tokenId, true);
     if (action === "activate-implant") {
-      await host.activateAbility(tokenId, id, node.dataset.abilityId);
-      status("Item ability used.", "success");
+      const used = await host.activateAbility(tokenId, id, node.dataset.abilityId);
+      if (!used) return;
+      status(used?.summary || "Item ability used.", used?.check && !["success", "critical-success"].includes(used.check.outcome) ? "error" : "success");
       return;
     }
     if (action === "implant-attack") {
@@ -6320,19 +6324,76 @@ function installCharacterTools(host) {
   }, syncPool: schedulePoolScan, isBusy: () => busy, renderInventory: (tracker) => disabledWhileBusy(inventoryView(tracker, getRole() === "GM")), renderTemplates: () => getRole() !== "GM" ? "" : disabledWhileBusy(`${storageError ? `<p class="cp-banner err">Local library could not be read: ${esc(storageError)}. Export JSON before replacing it.</p>` : ""}${templatesView(library, getRole() === "GM")}`) };
 }
 
+// ui/artifactMenu.js
+var artifactActionLabel = (kind) => ({ mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses", attack: "Attack", check: "Skill check", utility: "Use property" })[kind] || kind;
+function artifactActions(item, effects = []) {
+  const rows2 = [];
+  for (const a of item.abilities || []) if (["check", "bonus", "attack", "utility", "mana", "heal"].includes(a.kind)) rows2.push({ id: a.id, kind: a.kind, name: a.name, cost: a.cost || 0, level: a.level || 0, active: a.kind === "bonus" && effects.some((e) => e.id === "implant-effect:" + item.id + ":" + a.id) });
+  return rows2;
+}
+function showArtifactMenu(item, effects) {
+  const rows2 = artifactActions(item, effects), dialog = document.createElement("dialog");
+  dialog.className = "od-dialog od-artifact-menu";
+  dialog.innerHTML = '<div class="cp-row"><h2>' + esc(item.name) + '</h2><button type="button" data-menu-close aria-label="Close artifact menu">\xD7</button></div><p>' + item.charges + " / " + item.chargeMax + " charges</p>" + (!item.equippedPart ? '<p>Equip this artifact to use its actions.</p><button type="button" data-menu-choice="equip">Equip</button>' : "") + '<div class="od-artifact-actions">' + rows2.map((a) => '<button type="button" class="cp-skill-card od-artifact-option" data-menu-choice="' + esc("ability:" + a.id) + '" ' + (!item.equippedPart || item.quantity < 1 || item.charges < a.cost || a.active ? "disabled" : "") + "><span><b>" + esc(a.name) + "</b><small>" + esc(artifactActionLabel(a.kind)) + (a.level != null ? " \xB7 " + a.level + "/10" : "") + (a.active ? " \xB7 active" : "") + '</small></span><span class="cp-pill">' + a.cost + " charges</span></button>").join("") + (rows2.length ? "" : "<p>No active actions. Passive properties work while equipped.</p>") + "</div>";
+  document.body.append(dialog);
+  dialog.showModal();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    dialog.querySelector("[data-menu-close]").onclick = () => finish(null);
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      finish(null);
+    });
+    dialog.addEventListener("click", (e) => {
+      const node = e.target.closest("[data-menu-choice]");
+      if (node && !node.disabled) finish(node.dataset.menuChoice);
+    });
+  });
+}
+
 // ui/artifactTools.js
 function installArtifactTools(host) {
   let busy = false;
   document.addEventListener("click", (event) => {
-    const node = event.target.closest?.("[data-artifact-action]");
+    const direct = event.target.closest?.("[data-artifact-action]"), card = event.target.closest?.("[data-artifact-open]");
+    const node = direct || (!event.target.closest?.("button,input,select,textarea,a,label,summary") ? card : null);
     if (!node || node.disabled || busy) return;
     busy = true;
     (async () => {
       const token = host.getToken();
       if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
-      const id = node.dataset.id, action = node.dataset.artifactAction;
+      const id = node.dataset.id || node.dataset.artifactOpen;
+      let action = node.dataset.artifactAction || "menu";
       const tracker = host.tracker(token), item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact");
       if (!item) throw Error("Artifact no longer exists.");
+      if (action === "menu") {
+        const choice = await showArtifactMenu(item, tracker.avallon.effects);
+        if (!choice) return;
+        if (host.getToken()?.id !== token.id || !host.canControl(host.getToken(token.id))) throw Error("Selected character changed. Open the artifact again.");
+        if (choice === "equip") action = "equip";
+        else {
+          const current2 = host.tracker(host.getToken(token.id)).avallon.inventory.items.find((i) => i.id === id), ability = current2?.abilities.find((a) => a.id === choice.slice(8));
+          if (!current2?.equippedPart || !ability) throw Error("Artifact ability is unavailable.");
+          const original = item.abilities.find((a) => a.id === ability.id);
+          if (!original || original.cost !== ability.cost || original.kind !== ability.kind || original.level !== ability.level) throw Error("Artifact ability changed. Open the menu again.");
+          if (ability.kind === "attack") {
+            host.prepareAbility(token.id, "implant:" + id + ":" + ability.id);
+            host.status("Ability selected in Attack.", "success");
+            return;
+          }
+          const used = await host.useAbility(token.id, id, ability.id);
+          if (!used) return;
+          host.status(used.summary, used.check && !["success", "critical-success"].includes(used.check.outcome) ? "error" : "success");
+          return;
+        }
+      }
       let part = "";
       if (action === "use" && item.artifactEffect === "heal") {
         const choice = await formDialog("Use " + item.name, [{ name: "part", label: "Body part", options: Object.entries(tracker.body).filter(([, p]) => host.getRole() === "GM" || !p.hidden).map(([key, p]) => [key, p.label || key]) }], { submitLabel: "Use charges" });
@@ -7024,7 +7085,10 @@ function sanitizeAvallonData(raw) {
     if (ammo) ammo.quantity = Math.min(999999, ammo.quantity + Math.max(0, Math.floor(Number(m.loaded) || 0)));
   }
   next.inventory = normalizeInventory({ ...raw.inventory, magazines: [] }, next.weapons.ranged, "", next.skillLabels);
-  next.effects = normalizeEffects(raw.effects);
+  next.effects = normalizeEffects(raw.effects).map((effect) => {
+    const item = next.inventory.items.find((i) => effect.id === "artifact-effect:" + i.id), legacy = item?.abilities.find((a) => a.legacyDefault);
+    return legacy ? { ...effect, id: "implant-effect:" + item.id + ":" + legacy.id, sourceItemId: item.id } : effect;
+  });
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
   if (raw.vehicle?.enabled) next.vehicle = { enabled: true, pilotTokenId: String(raw.vehicle.pilotTokenId || "").trim().slice(0, 120) };
@@ -7614,9 +7678,9 @@ async function syncTrackedOverlays() {
 function rollPercent() {
   return Math.floor(Math.random() * 100) + 1;
 }
-function rollDice(sides, modifier2 = 0, count2 = 1) {
+function rollDice(sides, modifier2 = 0, count = 1) {
   const safeSides = clamp(Number(sides) || 0, 2, Number.MAX_SAFE_INTEGER);
-  const safeCount = clamp(Number(count2) || 0, 1, 100);
+  const safeCount = clamp(Number(count) || 0, 1, 100);
   const rolls = Array.from({ length: safeCount }, () => Math.floor(Math.random() * safeSides) + 1);
   const subtotal = rolls.reduce((sum, roll) => sum + roll, 0);
   return {
@@ -10459,6 +10523,50 @@ function getActionFieldValue(selector) {
   }
   return field.value;
 }
+async function useItemAbility(tokenId, itemId, abilityId) {
+  const actor = getCharacterById(tokenId);
+  if (!actor || !canUseToken(actor)) throw Error("Character unavailable.");
+  const tracker = getTrackerData(actor), source = checkItemAbilityCost(tracker, itemId, abilityId);
+  let partName = "";
+  if (source.ability.kind === "heal") {
+    const choice = await formDialog("Use " + source.ability.name, [{ name: "part", label: "Body part", options: Object.entries(tracker.body).filter(([, p]) => isEditable() || !p.hidden).map(([key, p]) => [key, p.label || key]) }], { submitLabel: "Use charges" });
+    if (!choice) return null;
+    partName = choice.part;
+  }
+  let used, rolled;
+  const modifier2 = Number(document.querySelector('[data-profile-modifier="skill"]')?.value) || 0;
+  const rollOnce = (level, mod) => {
+    if (rolled && (rolled.baseSkill !== level || rolled.modifier !== mod)) throw Error("Ability level changed. Retry the check.");
+    return rolled ?? (rolled = rollSkillCheck(level, mod));
+  };
+  await updateTrackerData2(tokenId, (current2) => {
+    const next = structuredClone(current2);
+    used = activateImplantAbility(next, itemId, abilityId, { rollSkill: rollOnce, modifier: modifier2, partName });
+    used.summary = used.name + (used.check ? " \xB7 " + used.check.totalPrimary + " vs " + used.check.totalSecondary + " (" + used.check.result + ")" : "") + " \xB7 " + used.cost + " " + used.currency + " spent";
+    next.lastRoll = { eventId: 0, actorName: playerName, summary: used.summary, outcome: used.check?.outcome || "ability-use", ...used.check ? { total: used.check.totalPrimary } : {}, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+    next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
+    return next;
+  });
+  await syncState();
+  scheduleRender();
+  if (used.check) {
+    try {
+      await pushDebugEntry(getCharacterName(getCharacterById(tokenId)) + " \xB7 " + used.name, formatRollSkillDebug({ tokenName: getCharacterName(getCharacterById(tokenId)), skillName: used.name, result: used.check }) + "\nSpent: " + used.cost + " " + used.currency, ["success", "critical-success"].includes(used.check.outcome) ? "success" : "error");
+    } catch {
+      used.summary += " \xB7 public log unavailable";
+    }
+  }
+  return used;
+}
+function prepareItemAbilityAttack(id, key) {
+  const token = getCharacterById(id);
+  if (!token || !canUseToken(token)) throw Error("Character unavailable.");
+  const weapon = implantAttacks(getAvallonData2(token)).find((w) => w.selectionKey === key);
+  if (!weapon) throw Error("Item ability unavailable.");
+  syncAttackWeaponInputs(id, key, weapon.damage, weapon.accuracy);
+  saveAttackDraftValue(id, "skill", key);
+  scheduleRender();
+}
 var attackPending = false;
 async function performAttack(options = {}) {
   if (attackPending) return;
@@ -10756,9 +10864,9 @@ async function performRollDice() {
     return;
   }
   const dice = Number(getActionFieldValue('[data-roll-field="dice"]')) || 20;
-  const count2 = Number(getActionFieldValue('[data-roll-field="count"]')) || 1;
+  const count = Number(getActionFieldValue('[data-roll-field="count"]')) || 1;
   const modifier2 = Number(getActionFieldValue('[data-roll-field="modifier"]')) || 0;
-  const result = rollDice(dice, modifier2, count2);
+  const result = rollDice(dice, modifier2, count);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   await updateTrackerData2(token.id, (current2) => {
@@ -11022,9 +11130,9 @@ async function performPrivateGmRoll() {
     return;
   }
   const dice = Number(getActionFieldValue('[data-gm-roll-field="dice"]')) || 20;
-  const count2 = Number(getActionFieldValue('[data-gm-roll-field="count"]')) || 1;
+  const count = Number(getActionFieldValue('[data-gm-roll-field="count"]')) || 1;
   const modifier2 = Number(getActionFieldValue('[data-gm-roll-field="modifier"]')) || 0;
-  const result = rollDice(dice, modifier2, count2);
+  const result = rollDice(dice, modifier2, count);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   pushPrivateGmEntry(
@@ -11621,24 +11729,9 @@ lib_default.onReady(async () => {
       getPoolTokens: async () => (await lib_default.scene.items.getItems()).filter(isCharacterToken),
       getTokens: () => characterListCache,
       getEffective: getAvallonData2,
-      activateAbility: async (tokenId, itemId, abilityId) => {
-        await updateTrackerData2(tokenId, (current2) => {
-          const next = structuredClone(current2);
-          const used = activateImplantAbility(next, itemId, abilityId);
-          next.lastRoll = { eventId: 0, actorName: playerName, summary: used.name + " \xB7 " + used.cost + " " + used.currency + " spent", outcome: "ability-use", timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
-          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
-          return next;
-        });
-        await syncState();
-        scheduleRender();
-      },
+      activateAbility: useItemAbility,
       setVehicle: setVehicleState,
-      selectImplantAttack: (tokenId, key) => {
-        const token = getCharacterById(tokenId), weapon = getWeaponByName(token, key);
-        syncAttackWeaponInputs(tokenId, key, weapon.damage, weapon.accuracy);
-        saveAttackDraftValue(tokenId, "skill", key);
-        scheduleRender();
-      },
+      selectImplantAttack: prepareItemAbilityAttack,
       useItem: useCharacterItem,
       getToken: (id) => getCharacterById(id ?? activeTokenId),
       getRole: () => playerRole,
@@ -11668,7 +11761,7 @@ lib_default.onReady(async () => {
       void targetDistance.clear();
     });
     new MutationObserver(() => paintAbilityAttackFields()).observe(ui.selectedTokenPanel, { childList: true, subtree: true });
-    installArtifactTools({ getToken: (id) => getCharacterById(id ?? activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, update: updateTrackerData2, render: scheduleRender, status: setStatus });
+    installArtifactTools({ useAbility: useItemAbility, prepareAbility: prepareItemAbilityAttack, getToken: (id) => getCharacterById(id ?? activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, update: updateTrackerData2, render: scheduleRender, status: setStatus });
     installMagicTools({ getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
       const t = getCharacterById(id), w = getWeaponByName(t, key);
       syncAttackWeaponInputs(id, key, w.damage, w.accuracy);

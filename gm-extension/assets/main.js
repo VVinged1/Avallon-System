@@ -824,10 +824,19 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
 var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 // artifactRules.js
-var count = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
+var half2 = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
 function normalizeArtifact(raw = {}) {
-  const chargeMax = count(raw.chargeMax);
-  return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
+  const chargeMax = half2(raw.chargeMax);
+  return { chargeMax, charges: half2(raw.charges ?? chargeMax, chargeMax), artifactEffect: "property" };
+}
+function artifactAbilities(raw = {}) {
+  const rows2 = structuredClone(Array.isArray(raw.abilities) ? raw.abilities : []);
+  if (["mana", "heal", "bonus"].includes(raw.artifactEffect)) {
+    let id = "artifact-default";
+    while (rows2.some((a) => a.id === id)) id += "-legacy";
+    rows2.push({ id, legacyDefault: true, name: { mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses" }[raw.artifactEffect], kind: raw.artifactEffect, level: 0, cost: half2(raw.chargeCost ?? 1), effectAmount: half2(raw.effectAmount), bonuses: raw.activeBonuses, description: "Converted from the artifact\u2019s former default action." });
+  }
+  return rows2;
 }
 
 // inventory.js
@@ -858,7 +867,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),
@@ -4544,7 +4553,10 @@ function sanitizeAvallonData(raw) {
     if (ammo) ammo.quantity = Math.min(999999, ammo.quantity + Math.max(0, Math.floor(Number(m.loaded) || 0)));
   }
   next.inventory = normalizeInventory({ ...raw.inventory, magazines: [] }, next.weapons.ranged, "", next.skillLabels);
-  next.effects = normalizeEffects(raw.effects);
+  next.effects = normalizeEffects(raw.effects).map((effect) => {
+    const item = next.inventory.items.find((i) => effect.id === "artifact-effect:" + i.id), legacy = item?.abilities.find((a) => a.legacyDefault);
+    return legacy ? { ...effect, id: "implant-effect:" + item.id + ":" + legacy.id, sourceItemId: item.id } : effect;
+  });
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
   if (raw.vehicle?.enabled) next.vehicle = { enabled: true, pilotTokenId: String(raw.vehicle.pilotTokenId || "").trim().slice(0, 120) };
@@ -5071,9 +5083,9 @@ async function flushOverlayEnsure(tokenId, pending) {
 function rollPercent() {
   return Math.floor(Math.random() * 100) + 1;
 }
-function rollDice(sides, modifier2 = 0, count2 = 1) {
+function rollDice(sides, modifier2 = 0, count = 1) {
   const safeSides = clamp(Number(sides) || 0, 2, Number.MAX_SAFE_INTEGER);
-  const safeCount = clamp(Number(count2) || 0, 1, 100);
+  const safeCount = clamp(Number(count) || 0, 1, 100);
   const rolls = Array.from({ length: safeCount }, () => Math.floor(Math.random() * safeSides) + 1);
   const subtotal = rolls.reduce((sum, roll) => sum + roll, 0);
   return {
@@ -5679,9 +5691,9 @@ async function performPublicGmRoll() {
     return;
   }
   const dice = Number(ui.publicDiceSides.value) || 20;
-  const count2 = Number(ui.publicDiceCount.value) || 1;
+  const count = Number(ui.publicDiceCount.value) || 1;
   const modifier2 = Number(ui.publicDiceModifier.value) || 0;
-  const result = rollDice(dice, modifier2, count2);
+  const result = rollDice(dice, modifier2, count);
   const diceLabel = `${result.count}d${result.sides}`;
   const summary = buildDiceRollSummary(diceLabel, result);
   const isPublic = Boolean(ui.publicDicePrivate?.checked);

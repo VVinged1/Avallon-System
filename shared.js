@@ -376,7 +376,7 @@ export function sanitizeAvallonData(raw) {
     const ammo=next.ammunition.find(a=>a.id===m.loadedAmmoId);if(ammo)ammo.quantity=Math.min(999999,ammo.quantity+Math.max(0,Math.floor(Number(m.loaded)||0)));
   }
   next.inventory = normalizeInventory({...raw.inventory,magazines:[]}, next.weapons.ranged,'',next.skillLabels);
-  next.effects = normalizeEffects(raw.effects);
+  next.effects = normalizeEffects(raw.effects).map(effect=>{const item=next.inventory.items.find(i=>effect.id==='artifact-effect:'+i.id),legacy=item?.abilities.find(a=>a.legacyDefault);return legacy?{...effect,id:'implant-effect:'+item.id+':'+legacy.id,sourceItemId:item.id}:effect;});
   next.abilities=normalizeAbilities(raw.abilities);next.mana=normalizeMana(raw.mana);
   if(raw.vehicle?.enabled)next.vehicle={enabled:true,pilotTokenId:String(raw.vehicle.pilotTokenId||'').trim().slice(0,120)};
   next.preferences = {parryMode: ["off","1","2","3","4","5"].includes(raw.preferences?.parryMode) ? raw.preferences.parryMode : "off"};

@@ -22,7 +22,7 @@ try{
   await page.locator('dialog [data-add-ability]').click();await page.locator('dialog [name="abilityName"]').fill('Navigator power');await page.locator('dialog [name="abilityCost"]').fill('0.5');
   for(const width of [360,480,620,1000]){
    await page.setViewportSize({width,height:1100});
-   for(const kind of ['skill','bonus','attack','utility']){
+   for(const kind of ['skill','bonus','attack','utility','check']){
     await page.locator('dialog [name="abilityKind"]').selectOption(kind);
     if(kind==='bonus'){const bonus=page.locator('dialog [data-bonus-editor="ability"]');if(!await bonus.locator('[name="abilityAttr:Reaction"]').count()){await bonus.locator('[data-bonus-choice]').selectOption('a:Reaction');await bonus.locator('[data-bonus-add]').click();}await bonus.locator('.od-new-bonus-skill').evaluate(e=>e.open=true);}
     await page.locator('dialog [name="abilityKind"]').scrollIntoViewIfNeeded();await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
