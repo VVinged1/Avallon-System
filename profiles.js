@@ -50,7 +50,7 @@ export function instantiateTemplate(current, template, sanitize) {
   for (const w of data.avallon.weapons.melee) w.id=newId();
   for (const item of data.avallon.inventory.items) item.id = newId();
   // Preserve destination identity, permissions and history; never inherit source identity.
-  const next = sanitize({...current, ...data, avallon:{...current.avallon,...data.avallon,mana:{spent:0},effects:[],vehicle:data.avallon.vehicle,owner:current.avallon.owner,attackDraft:{targetTokenId:'',targetTokenName:''}}});
+  const next = sanitize({...current, ...data, avallon:{...current.avallon,...data.avallon,mana:{spent:0},effects:[],statuses:[],vehicle:data.avallon.vehicle,owner:current.avallon.owner,attackDraft:{targetTokenId:'',targetTokenName:''}}});
   return next;
 }
 export function readLibrary(storage, sanitize) {

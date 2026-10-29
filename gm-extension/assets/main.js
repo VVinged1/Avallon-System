@@ -469,10 +469,10 @@ function installTooltips() {
   };
   const show = (node) => {
     hide();
-    const text2 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
-    if (!text2) return;
+    const text3 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
+    if (!text3) return;
     active = node;
-    tip.textContent = text2;
+    tip.textContent = text3;
     node.setAttribute("aria-describedby", tip.id);
     const host = node.closest("dialog[open]") || document.body;
     if (tip.matches(":popover-open")) tip.hidePopover();
@@ -529,25 +529,25 @@ var paths = {
   window: "M3 3h18v18H3Z M3 8h18 M8 8v13",
   copy: "M8 8h13v13H8Z M16 8V3H3v13h5"
 };
-function iconFor(text2) {
-  if (/description/i.test(text2)) return "info";
-  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text2)) return "close";
-  if (/edit|rename|set rounds|set magazine/i.test(text2)) return "edit";
-  if (/duplicate/i.test(text2)) return "copy";
-  if (/export|empty to|load from/i.test(text2)) return "download";
-  if (/import/i.test(text2)) return "upload";
-  if (/account/i.test(text2)) return "cloud";
-  if (/save/i.test(text2)) return "save";
-  if (/add|new|^\+/i.test(text2)) return "plus";
-  if (/reload|refresh|rebuild|fill|sync/i.test(text2)) return "refresh";
-  if (/select|pick|target|focus/i.test(text2)) return "target";
-  if (/roll|d100|dice/i.test(text2)) return "dice";
-  if (/attack|resolve/i.test(text2)) return "attack";
-  if (/heal|repair/i.test(text2)) return "heal";
-  if (/equip/i.test(text2)) return "shield";
-  if (/template/i.test(text2)) return "book";
-  if (/hud|window|open/i.test(text2)) return "window";
-  if (/use|apply/i.test(text2)) return "play";
+function iconFor(text3) {
+  if (/description/i.test(text3)) return "info";
+  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text3)) return "close";
+  if (/edit|rename|set rounds|set magazine/i.test(text3)) return "edit";
+  if (/duplicate/i.test(text3)) return "copy";
+  if (/export|empty to|load from/i.test(text3)) return "download";
+  if (/import/i.test(text3)) return "upload";
+  if (/account/i.test(text3)) return "cloud";
+  if (/save/i.test(text3)) return "save";
+  if (/add|new|^\+/i.test(text3)) return "plus";
+  if (/reload|refresh|rebuild|fill|sync/i.test(text3)) return "refresh";
+  if (/select|pick|target|focus/i.test(text3)) return "target";
+  if (/roll|d100|dice/i.test(text3)) return "dice";
+  if (/attack|resolve/i.test(text3)) return "attack";
+  if (/heal|repair/i.test(text3)) return "heal";
+  if (/equip/i.test(text3)) return "shield";
+  if (/template/i.test(text3)) return "book";
+  if (/hud|window|open/i.test(text3)) return "window";
+  if (/use|apply/i.test(text3)) return "play";
   return "box";
 }
 function installCompactButtons() {
@@ -555,12 +555,12 @@ function installCompactButtons() {
   const enhance = () => {
     for (const button of document.querySelectorAll("button")) {
       if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
-      const text2 = button.textContent.trim();
-      if (!text2 || text2.length <= 2) continue;
-      button.title = text2;
-      button.setAttribute("aria-label", text2);
+      const text3 = button.textContent.trim();
+      if (!text3 || text3.length <= 2) continue;
+      button.title = text3;
+      button.setAttribute("aria-label", text3);
       button.classList.add("od-icon-button");
-      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text2)]}"></path></svg>`;
+      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text3)]}"></path></svg>`;
     }
   };
   let scheduled = false;
@@ -603,7 +603,7 @@ function normalizeEffects(raw) {
   return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((e) => e && typeof e.id === "string" && !seen.has(e.id) && seen.add(e.id)).map((e) => ({ id: e.id.slice(0, 120), name: String(e.name || "Effect").slice(0, 120), bonuses: normalizeBonuses(e.bonuses), ...e.sourceItemId ? { sourceItemId: String(e.sourceItemId).slice(0, 120) } : {} }));
 }
 function itemAbilityAvailable(item) {
-  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact"].includes(item.kind) && !!item.equippedPart);
+  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact", "armor", "shield"].includes(item.kind) && !!item.equippedPart && itemActive(item));
 }
 function itemActive(item) {
   return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
@@ -774,12 +774,20 @@ function setCombinedPartHp(tracker, partName, value) {
   part.current = goal;
 }
 
+// statusRules.js
+var text = (value, max) => String(value ?? "").trim().slice(0, max);
+var statusDefinition = (ability) => ({ statusName: text(ability?.statusName, 80), statusDescription: text(ability?.statusDescription, 2e3) });
+function normalizeStatuses(raw) {
+  const seen = /* @__PURE__ */ new Set();
+  return (Array.isArray(raw) ? raw : []).slice(0, 50).filter((s) => s && typeof s.id === "string").map((s) => ({ id: text(s.id, 120), name: text(s.name, 80), description: text(s.description, 2e3), sourceName: text(s.sourceName, 120), sourceKey: text(s.sourceKey, 400) })).filter((s) => s.id && s.name && !seen.has(s.id) && seen.add(s.id));
+}
+
 // magicRules.js
 var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2;
 var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
 function normalizeAbilities(raw) {
   const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
+  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), ...statusDefinition(a), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 
 // itemGroups.js
@@ -795,7 +803,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
     if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (!["prosthesis", "resource", "artifact"].includes(item.kind)) delete definition.abilities;
+    if (!["prosthesis", "resource", "artifact", "armor", "shield"].includes(item.kind)) delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -842,7 +850,7 @@ function artifactAbilities(raw = {}) {
 // inventory.js
 var LIMIT = 2e3;
 var int = (v, max = 999999) => Math.min(max, Math.max(0, Math.floor(Number(v) || 0)));
-var text = (v, max = 120) => String(v ?? "").trim().slice(0, max);
+var text2 = (v, max = 120) => String(v ?? "").trim().slice(0, max);
 var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "prosthesis", "artifact"]);
 function rows(raw, map) {
   const seen = /* @__PURE__ */ new Set();
@@ -852,25 +860,25 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
   const items = rows(raw?.items, (input, i) => {
     const r = { ...input, kind: input.kind === "implant" ? "prosthesis" : input.kind };
     return {
-      id: text(r.id || `legacy-item-${i}`),
-      name: text(r.name) || "Item",
+      id: text2(r.id || `legacy-item-${i}`),
+      name: text2(r.name) || "Item",
       kind: kinds.has(r.kind) ? r.kind : "item",
       quantity: int(r.quantity ?? 1),
-      description: text(r.description, 2e3),
+      description: text2(r.description, 2e3),
       armor: int(r.armor, 999),
       subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
       healCritical: int(r.healCritical ?? 1, 999),
-      useSkill: text(r.useSkill, 80),
-      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
-      slot: text(r.slot || "any", 40),
+      useSkill: text2(r.useSkill, 80),
+      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text2(s, 40)).filter(Boolean))].slice(0, 100),
+      slot: text2(r.slot || "any", 40),
       criticalMax: int(r.criticalMax, 999),
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text2(a.id || "ability-" + j), name: text2(a.name) || "Ability", ...statusDefinition(a), level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text2(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
-      equippedPart: text(r.equippedPart, 40),
+      equippedPart: text2(r.equippedPart, 40),
       previousArmor: int(r.previousArmor, 999)
     };
   });
@@ -897,7 +905,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       items.push({ ...structuredClone(item), id, equippedPart: "" });
     }
   }
-  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 999)])) };
+  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), int(v, 999)])) };
 }
 
 // node_modules/@owlbear-rodeo/sdk/lib/api/PlayerApi.js
@@ -4343,6 +4351,7 @@ var DEFAULT_TRACKER_DATA = {
       Magic: 0
     },
     inventory: { version: 3, items: [], magazines: [], baseArmor: {}, baseMax: {} },
+    statuses: [],
     abilities: [],
     mana: { spent: 0 },
     effects: [],
@@ -4541,7 +4550,7 @@ function sanitizeAvallonData(raw) {
     if (description) next.skillDescriptions[skillName] = description;
     next.skillLabels[skillName] = String(rawSkillLabels[skillName] ?? skillName).trim().slice(0, 40) || skillName;
     next.skillPerks[skillName] = Array.isArray(rawSkillPerks[skillName]) ? rawSkillPerks[skillName].map((perk) => String(perk ?? "").trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
-    const perkDescriptions = Object.fromEntries(next.skillPerks[skillName].map((name) => [name, String(raw.skillPerkDescriptions?.[skillName]?.[name] || "").trim().slice(0, 2e3)]).filter(([, text2]) => text2));
+    const perkDescriptions = Object.fromEntries(next.skillPerks[skillName].map((name) => [name, String(raw.skillPerkDescriptions?.[skillName]?.[name] || "").trim().slice(0, 2e3)]).filter(([, text3]) => text3));
     if (Object.keys(perkDescriptions).length) next.skillPerkDescriptions[skillName] = perkDescriptions;
   }
   next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
@@ -4557,6 +4566,7 @@ function sanitizeAvallonData(raw) {
     const item = next.inventory.items.find((i) => effect.id === "artifact-effect:" + i.id), legacy = item?.abilities.find((a) => a.legacyDefault);
     return legacy ? { ...effect, id: "implant-effect:" + item.id + ":" + legacy.id, sourceItemId: item.id } : effect;
   });
+  next.statuses = normalizeStatuses(raw.statuses);
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
   if (raw.vehicle?.enabled) next.vehicle = { enabled: true, pilotTokenId: String(raw.vehicle.pilotTokenId || "").trim().slice(0, 120) };

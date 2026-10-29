@@ -1,3 +1,5 @@
+import {applyNarrativeAbility} from './narrativeUse.js';
+import {statusView,installStatusTools} from './ui/statusTools.js';
 import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
 import {manaStatus,spendMana,abilityAttacks,activateAbility} from './magicRules.js';
 import {installArtifactTools} from './ui/artifactTools.js';
@@ -3396,6 +3398,7 @@ function renderSelectedToken() {
           : ""
       }
       ${characterTools?characterTools.renderVehicle(token):''}
+      ${isEditable()||token.visible!==false||canUseToken(token)?statusView(data.avallon,isEditable()):''}
       ${canUseToken(token) ? effectChips(avallon,isEditable()) : ""}
       ${canUseToken(token) ? renderCharacteristicsBlock({ avallon }) : ""}
       ${canUseToken(token) ? renderEnglishSkillsBlock({ avallon }, gmOnlyDisabled) : ""}
@@ -4217,9 +4220,25 @@ function getActionFieldValue(selector) {
   return field.value;
 }
 
+async function useNarrativeStatus(sourceId,itemId,abilityId){
+  const actor=getCharacterById(sourceId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
+  const initial=getTrackerData(actor),ability=itemId?checkItemAbilityCost(initial,itemId,abilityId).ability:initial.avallon.abilities.find(a=>a.id===abilityId);
+  if(!ability||ability.kind!=='utility'||!ability.statusName)throw Error('Narrative status ability unavailable.');
+  const expected=JSON.stringify([ability.kind,ability.cost,ability.statusName,ability.statusDescription]);
+  const choice=await formDialog('Apply status · '+ability.statusName,[{name:'target',label:'Target',value:'',options:[['','Self'],...characterListCache.filter(t=>t.id!==sourceId&&(isEditable()||t.visible!==false)).map(t=>[t.id,getCharacterName(t)])]}],{submitLabel:'Use ability',message:ability.statusDescription||ability.description||'Narrative reminder only.'});if(!choice)return null;
+  const targetId=choice.target||sourceId,statusId=crypto.randomUUID();let result;
+  await queueTrackerWrite(sourceId,()=>OBR.scene.items.updateItems([...new Set([sourceId,targetId])],items=>{
+    const source=items.find(t=>t.id===sourceId),target=items.find(t=>t.id===targetId);if(!source||!target||!canUseToken(source)||!isEditable()&&target.id!==sourceId&&target.visible===false)throw Error('Character or target unavailable.');
+    const sourceData=getTrackerData(source),targetData=source===target?sourceData:getTrackerData(target);
+    result=applyNarrativeAbility({source:sourceData,target:targetData,itemId,abilityId,sourceTokenId:sourceId,sourceName:source.visible===false?'':getCharacterName(source),statusId,expected});
+    result.summary=result.used.name+' → '+getCharacterName(target)+' · '+result.status.name+' · '+result.used.cost+' '+result.used.currency+' spent';
+    result.source.lastRoll={eventId:0,actorName:getCharacterName(source),summary:result.summary,outcome:'narrative-status',timestamp:new Date().toISOString(),source:'avallon-extension'};result.source.history=[result.source.lastRoll,...(result.source.history||[])].slice(0,12);
+    source.metadata[META_KEY]=sanitizeTrackerData(result.source);if(source!==target)target.metadata[META_KEY]=sanitizeTrackerData(result.target);
+  }));await syncState();scheduleRender();return result;
+}
 async function useItemAbility(tokenId,itemId,abilityId){
   const actor=getCharacterById(tokenId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
-  const tracker=getTrackerData(actor),source=checkItemAbilityCost(tracker,itemId,abilityId);let partName='';
+  const tracker=getTrackerData(actor),source=checkItemAbilityCost(tracker,itemId,abilityId);if(source.ability.kind==='utility'&&source.ability.statusName)return useNarrativeStatus(tokenId,itemId,abilityId);let partName='';
   if(source.ability.kind==='heal'){const choice=await formDialog('Use '+source.ability.name,[{name:'part',label:'Body part',options:Object.entries(tracker.body).filter(([,p])=>isEditable()||!p.hidden).map(([key,p])=>[key,p.label||key])}],{submitLabel:'Use charges'});if(!choice)return null;partName=choice.part;}
 
         let used,rolled;const modifier=Number(document.querySelector('[data-profile-modifier="skill"]')?.value)||0;
@@ -5498,8 +5517,9 @@ OBR.onReady(async () => {
     OBR.scene.grid.onChange(()=>{targetDistance.invalidate();refreshTargetDistance();});
     window.addEventListener('beforeunload',()=>{void targetDistance.clear();});
     new MutationObserver(()=>paintAbilityAttackFields()).observe(ui.selectedTokenPanel,{childList:true,subtree:true});
+    installStatusTools({getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,update:updateTrackerData,status:setStatus,render:scheduleRender});
     installArtifactTools({useAbility:useItemAbility,prepareAbility:prepareItemAbilityAttack,getToken:id=>getCharacterById(id??activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,update:updateTrackerData,render:scheduleRender,status:setStatus});
-    installMagicTools({getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
+    installMagicTools({useNarrative:(id,abilityId)=>useNarrativeStatus(id,'',abilityId),getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
     bindUiEvents();
     await removeAttackTargetContextMenu();
     await Promise.all([

@@ -1,3 +1,4 @@
+import {statusDefinition} from './statusRules.js';
 import {normalizeArtifact,artifactAbilities} from './artifactRules.js';
 import {mergeInventoryStacks} from './itemGroups.js';
 import {normalizeWeaponCategory,normalizeRangeReduction} from './rangeRules.js';
@@ -22,7 +23,7 @@ export function normalizeInventory(raw, weapons = [], preferredId='',skillLabels
     healCritical: int(r.healCritical ?? 1,999), useSkill:text(r.useSkill,80), slots:[...new Set((Array.isArray(r.slots)?r.slots:[r.slot||'any']).map(s=>text(s,40)).filter(Boolean))].slice(0,100), slot: text(r.slot||'any',40),
     criticalMax:int(r.criticalMax,999), criticalDamage:int(r.criticalDamage,int(r.criticalMax,999)),
     playerRemovable:r.playerRemovable===true, bonuses:normalizeBonuses(['resource','prosthesis'].includes(r.kind)?{...r.bonuses,rangeReduction:{}}:r.bonuses),
-    abilities:(r.kind==='artifact'?artifactAbilities(r):Array.isArray(r.abilities)?r.abilities:[]).slice(0,100).map((a,j)=>({id:text(a.id||'ability-'+j),name:text(a.name)||'Ability',level:int(a.level,10),...(a.legacyDefault?{legacyDefault:true}:{}),effectAmount:Math.round(Math.max(0,Math.min(999,Number(a.effectAmount)||0))*2)/2,cost:Math.round(Math.max(0,Math.min(999,Number(a.cost)||0))*2)/2,description:text(a.description,2000),...(a.kind&&a.kind!=='skill'?{kind:['bonus','attack','utility','check','mana','heal'].includes(a.kind)?a.kind:'skill',bonuses:normalizeBonuses(a.bonuses),damage:int(a.damage,999),accuracy:Math.max(-999,Math.min(999,Number(a.accuracy)||0))}:{})})),
+    abilities:(r.kind==='artifact'?artifactAbilities(r):Array.isArray(r.abilities)?r.abilities:[]).slice(0,100).map((a,j)=>({id:text(a.id||'ability-'+j),name:text(a.name)||'Ability',...statusDefinition(a),level:int(a.level,10),...(a.legacyDefault?{legacyDefault:true}:{}),effectAmount:Math.round(Math.max(0,Math.min(999,Number(a.effectAmount)||0))*2)/2,cost:Math.round(Math.max(0,Math.min(999,Number(a.cost)||0))*2)/2,description:text(a.description,2000),...(a.kind&&a.kind!=='skill'?{kind:['bonus','attack','utility','check','mana','heal'].includes(a.kind)?a.kind:'skill',bonuses:normalizeBonuses(a.bonuses),damage:int(a.damage,999),accuracy:Math.max(-999,Math.min(999,Number(a.accuracy)||0))}:{})})),
     ...(r.kind==='artifact'?normalizeArtifact(r):{}),
     legacyEquipment: r.legacyEquipment ?? (raw?.version<3 || !raw?.version),
     equippedPart: text(r.equippedPart, 40), previousArmor: int(r.previousArmor, 999),

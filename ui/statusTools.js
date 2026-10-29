@@ -1,0 +1,10 @@
+import {descriptionButton} from './descriptions.js';
+import {esc} from './characterView.js';
+import {formDialog} from './characterTools.js';
+import {addNarrativeStatus} from '../statusRules.js';
+export function statusView(o,gm){const rows=o.statuses||[];if(!rows.length&&!gm)return '';return '<div class="cp-statuses cp-row">'+rows.map(s=>'<span class="cp-status" data-narrative-status="'+esc(s.id)+'"><b>'+esc(s.name)+'</b>'+descriptionButton(s.name,[s.description,s.sourceName?'Source: '+s.sourceName:''].filter(Boolean).join('\n'))+(gm?'<button type="button" data-status-action="remove" data-id="'+esc(s.id)+'" aria-label="Remove '+esc(s.name)+' status" title="Remove status">×</button>':'')+'</span>').join('')+(gm?'<button type="button" data-status-action="add" title="Add narrative status">+ Status</button>':'')+'</div>';}
+export function installStatusTools(host){let busy=false;document.addEventListener('click',event=>{const node=event.target.closest?.('[data-status-action]');if(!node||busy)return;busy=true;(async()=>{
+ if(host.getRole()!=='GM')throw Error('Only the GM can manage statuses manually.');const token=host.getToken();if(!token)throw Error('Select a character.');
+ let value;if(node.dataset.statusAction==='add'){value=await formDialog('Status · '+token.name,[{name:'name',label:'Status name',required:true},{name:'description',label:'Description',type:'textarea'}],{message:'Narrative reminder. This does not change armor, damage, attributes or rolls.'});if(!value)return;}
+ const id=crypto.randomUUID();await host.update(token.id,current=>{if(host.getRole()!=='GM')throw Error('Only the GM can manage statuses.');const next=structuredClone(current);if(value)addNarrativeStatus(next,{id,name:value.name,description:value.description,sourceName:'GM'});else next.avallon.statuses=next.avallon.statuses.filter(s=>s.id!==node.dataset.id);return next;});host.status('Status updated.','success');
+ })().catch(e=>host.status(e.message,'error')).finally(()=>{busy=false;host.render();});});}

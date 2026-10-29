@@ -1,15 +1,15 @@
 {
   "name": "Avallon Initiative Tracker",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "manifest_version": 1,
   "author": "Codex",
   "homepage_url": "https://vvinged1.github.io/Avallon-System/",
   "description": "Shared initiative with d20 + effective Reaction, manual order and token focus",
-  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.2.1",
+  "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.0",
   "action": {
     "title": "Avallon Initiative",
-    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.2.1",
-    "popover": "https://vvinged1.github.io/Avallon-System/initiative/index.html?v=1.2.1",
+    "icon": "https://vvinged1.github.io/Avallon-System/icon.svg?v=1.3.0",
+    "popover": "https://vvinged1.github.io/Avallon-System/initiative/index.html?v=1.3.0",
     "height": 300,
     "width": 400
   }

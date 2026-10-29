@@ -16,7 +16,7 @@ const browser=await chromium.launch(process.env.PLAYWRIGHT_CHANNEL?{channel:proc
 
 try{
  const page=await browser.newPage({viewport:{width:1000,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+server.address().port+'/');await page.locator('[data-od-action="add-item"]').waitFor({state:'attached'});await page.locator('summary').filter({hasText:/^Items/}).first().click();
- for(const itemKind of ['resource','artifact','prosthesis']){
+ for(const itemKind of ['resource','artifact','prosthesis','armor','shield']){
   await page.locator('[data-od-action="add-item"]').click();await page.locator('dialog [name="kind"]').selectOption(itemKind);await page.locator('dialog [name="name"]').fill('Compact '+itemKind);
   const passive=page.locator('dialog [data-bonus-editor=""]');assert.equal(await passive.locator('[data-bonus-row]').count(),0);await passive.locator('[data-bonus-choice]').selectOption('a:Strength');await passive.locator('[data-bonus-add]').click();await passive.locator('[data-bonus-choice]').selectOption('s:Medicine');await passive.locator('[data-bonus-add]').click();await passive.locator('.od-new-bonus-skill>summary').click();await passive.locator('[data-new-bonus-name]').fill('Navigate the unknown');await passive.locator('[data-new-bonus-category] select').selectOption('control');await passive.locator('[data-bonus-new]').click();assert.equal(await passive.locator('[data-bonus-row]').count(),3);
   await page.locator('dialog [data-add-ability]').click();await page.locator('dialog [name="abilityName"]').fill('Navigator power');await page.locator('dialog [name="abilityCost"]').fill('0.5');

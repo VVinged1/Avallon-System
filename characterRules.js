@@ -17,7 +17,7 @@ export function equipmentFits(item,partName,part) {
   const slots=Array.isArray(item.slots)?item.slots:[item.slot||'any'];
   return slots.includes('any')||slots.includes(partName)||slots.includes(part?.slot);
 }
-export function itemAbilityAvailable(item){return item.quantity>0&&(['resource'].includes(item.kind)||(['prosthesis','artifact'].includes(item.kind)&&!!item.equippedPart));}
+export function itemAbilityAvailable(item){return item.quantity>0&&(['resource'].includes(item.kind)||(['prosthesis','artifact','armor','shield'].includes(item.kind)&&!!item.equippedPart&&itemActive(item)));}
 export function itemActive(item) { return item.quantity>0 && (item.kind==='prosthesis' || !item.criticalMax || item.criticalDamage<item.criticalMax); }
 export function armorSummary(o) {
   const total=(o.inventory?.items||[]).filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart&&itemActive(i)).reduce((sum,i)=>sum+i.armor,0);

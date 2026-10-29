@@ -393,6 +393,28 @@ var require_events = __commonJS({
   }
 });
 
+// statusRules.js
+var text = (value, max) => String(value ?? "").trim().slice(0, max);
+var statusDefinition = (ability) => ({ statusName: text(ability?.statusName, 80), statusDescription: text(ability?.statusDescription, 2e3) });
+function normalizeStatuses(raw) {
+  const seen = /* @__PURE__ */ new Set();
+  return (Array.isArray(raw) ? raw : []).slice(0, 50).filter((s) => s && typeof s.id === "string").map((s) => ({ id: text(s.id, 120), name: text(s.name, 80), description: text(s.description, 2e3), sourceName: text(s.sourceName, 120), sourceKey: text(s.sourceKey, 400) })).filter((s) => s.id && s.name && !seen.has(s.id) && seen.add(s.id));
+}
+function addNarrativeStatus(tracker, status) {
+  var _a;
+  const clean = normalizeStatuses([status])[0];
+  if (!clean?.id || !clean.name) throw Error("Enter a status name.");
+  (_a = tracker.avallon).statuses ?? (_a.statuses = []);
+  const current2 = clean.sourceKey && tracker.avallon.statuses.find((s) => s.sourceKey === clean.sourceKey);
+  if (current2) {
+    Object.assign(current2, { ...clean, id: current2.id });
+    return current2;
+  }
+  if (tracker.avallon.statuses.length >= 50) throw Error("This character has 50 statuses. Ask the GM to remove unused statuses.");
+  tracker.avallon.statuses.push(clean);
+  return clean;
+}
+
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
 var skillCap = () => 10;
@@ -441,7 +463,7 @@ function equipmentFits(item, partName, part) {
   return slots.includes("any") || slots.includes(partName) || slots.includes(part?.slot);
 }
 function itemAbilityAvailable(item) {
-  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact"].includes(item.kind) && !!item.equippedPart);
+  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact", "armor", "shield"].includes(item.kind) && !!item.equippedPart && itemActive(item));
 }
 function itemActive(item) {
   return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
@@ -661,7 +683,7 @@ var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2
 var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
 function normalizeAbilities(raw) {
   const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
+  return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((a) => a && typeof a.id === "string" && !seen.has(a.id) && seen.add(a.id)).map((a) => ({ id: a.id.slice(0, 120), name: String(a.name || "Ability").trim().slice(0, 120), description: String(a.description || "").slice(0, 2e3), ...statusDefinition(a), kind: ["attack", "bonus", "utility"].includes(a.kind) ? a.kind : "utility", cost: half(a.cost), level: Math.max(0, Math.min(10, Math.floor(Number(a.level) || 0))), damage: Math.max(0, Math.min(999, Number(a.damage) || 0)), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)), bonuses: normalizeBonuses(a.bonuses) }));
 }
 function manaStatus(o) {
   const max = Math.max(0, (o.baseAttributes ? o : effectiveAvallon(o)).attributes.Magic || 0);
@@ -694,76 +716,6 @@ function activateAbility(tracker, id) {
     tracker.avallon.effects.push({ id: key, name: a.name, bonuses: normalizeBonuses(a.bonuses) });
   }
   return a;
-}
-
-// itemUse.js
-function itemUseRequirement(avallon, item) {
-  const skill = String(item.useSkill || "").trim();
-  if (!skill) return { mode: "none", skill: "" };
-  const match = Object.keys(avallon.skills || {}).find((key) => key.toLowerCase() === skill.toLowerCase() || String(avallon.skillLabels?.[key] || key).toLowerCase() === skill.toLowerCase());
-  const learned = match && (avallon.availableSkills ? avallon.availableSkills.includes(match) : !Object.hasOwn(avallon.grantedSkills || {}, match) || match.startsWith("implant:"));
-  return learned ? { mode: "skill", skill: avallon.skillLabels?.[match] || skill, key: match, level: avallon.skills[match] } : { mode: "attribute", skill };
-}
-var passed = (result) => ["success", "critical-success"].includes(result.outcome);
-function resolveItemUseCheck({ avallon, item, attribute, rollCharacter, rollSkill }) {
-  const requirement = itemUseRequirement(avallon, item), stages = [];
-  if (requirement.mode === "none") return { ...requirement, stages, success: true };
-  if (requirement.mode === "attribute") {
-    if (!ATTRIBUTES.includes(attribute)) throw Error("Choose a characteristic for the unknown skill.");
-    const result2 = rollCharacter(avallon.attributes[attribute] || 0, 0);
-    stages.push({ kind: "attribute", name: attribute, result: result2 });
-    if (!passed(result2)) return { ...requirement, stages, success: false };
-  }
-  const result = rollSkill(requirement.mode === "skill" ? requirement.level : 0, 0);
-  stages.push({ kind: requirement.mode === "skill" ? "skill" : "random", name: requirement.mode === "skill" ? requirement.skill : "d100 vs d100", result });
-  return { ...requirement, stages, success: passed(result) };
-}
-function applyCheckedItemUse({ source, target, itemId, selection, attribute, effectId, rollCharacter, rollSkill, actorAvallon }) {
-  const item = source.avallon.inventory.items.find((row) => row.id === itemId);
-  if (!item || !["consumable", "medical"].includes(item.kind) || item.quantity < 1) throw Error("No usable item available.");
-  const projected = structuredClone(target);
-  useItemOnTracker(projected, item, selection, effectId);
-  const check = resolveItemUseCheck({ avallon: actorAvallon || effectiveAvallon(source.avallon), item, attribute, rollCharacter, rollSkill });
-  const same = source === target, nextSource = same && check.success ? projected : structuredClone(source);
-  nextSource.avallon.inventory.items.find((row) => row.id === itemId).quantity--;
-  return { ...check, itemName: item.name, source: nextSource, target: same ? nextSource : check.success ? projected : target };
-}
-function itemUseSummary(result) {
-  const stages = result.stages.map((stage) => stage.kind === "attribute" ? stage.name + ": " + stage.result.roll + " vs " + stage.result.finalAttribute + " (" + stage.result.result + ")" : stage.name + ": " + stage.result.totalPrimary + " vs " + stage.result.totalSecondary + " (" + stage.result.result + ")");
-  return result.itemName + " \xB7 " + (result.success ? "effect applied" : "no effect") + " \xB7 1 item spent" + (stages.length ? " \xB7 " + stages.join(" \u2192 ") : "");
-}
-
-// ui/descriptions.js
-var escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-var descriptionButton = (title, text2) => '<button type="button" class="cp-info" data-description-title="' + escape(title) + '" data-description-text="' + escape(text2 || "No description yet.") + '" aria-label="Description: ' + escape(title) + '" title="Show description">i</button>';
-function installDescriptions() {
-  document.addEventListener("click", (event) => {
-    const node = event.target.closest?.("[data-description-title]");
-    if (!node) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const dialog = document.createElement("dialog");
-    dialog.className = "od-dialog od-description-dialog";
-    const title = document.createElement("h2"), body = document.createElement("p"), close = document.createElement("button");
-    title.textContent = node.dataset.descriptionTitle;
-    body.textContent = node.dataset.descriptionText || "No description yet.";
-    close.textContent = "Close";
-    close.type = "button";
-    close.setAttribute("aria-label", "Close description");
-    close.dataset.descriptionClose = "";
-    const finish = () => {
-      dialog.close();
-      dialog.remove();
-    };
-    close.onclick = finish;
-    dialog.addEventListener("cancel", (event2) => {
-      event2.preventDefault();
-      finish();
-    });
-    dialog.append(title, body, close);
-    document.body.append(dialog);
-    dialog.showModal();
-  });
 }
 
 // implantAbilities.js
@@ -809,28 +761,197 @@ function activateImplantAbility(tracker, itemId, abilityId, { rollSkill, modifie
   return { ...effect, cost: row.cost, currency: row.currency, ...check ? { check } : {} };
 }
 
-// artifactRules.js
-var half2 = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
-function normalizeArtifact(raw = {}) {
-  const chargeMax = half2(raw.chargeMax);
-  return { chargeMax, charges: half2(raw.charges ?? chargeMax, chargeMax), artifactEffect: "property" };
+// narrativeUse.js
+function applyNarrativeAbility({ source, target, itemId = "", abilityId, sourceTokenId, sourceName, statusId, expected }) {
+  const ability = itemId ? checkItemAbilityCost(source, itemId, abilityId).ability : source.avallon.abilities.find((a) => a.id === abilityId);
+  if (!ability || ability.kind !== "utility" || !ability.statusName) throw Error("Narrative status ability is unavailable.");
+  const definition = JSON.stringify([ability.kind, ability.cost, ability.statusName, ability.statusDescription]);
+  if (expected && expected !== definition) throw Error("Ability changed. Choose the target again.");
+  const nextSource = structuredClone(source), nextTarget = source === target ? nextSource : structuredClone(target);
+  const status = addNarrativeStatus(nextTarget, { id: statusId, name: ability.statusName, description: ability.statusDescription || ability.description || "", sourceName, sourceKey: sourceTokenId + ":" + itemId + ":" + abilityId });
+  const used = itemId ? activateImplantAbility(nextSource, itemId, abilityId) : { ...activateAbility(nextSource, abilityId), currency: "mana" };
+  return { source: nextSource, target: nextTarget, status, used };
 }
-function artifactAbilities(raw = {}) {
-  const rows2 = structuredClone(Array.isArray(raw.abilities) ? raw.abilities : []);
-  if (["mana", "heal", "bonus"].includes(raw.artifactEffect)) {
-    let id = "artifact-default";
-    while (rows2.some((a) => a.id === id)) id += "-legacy";
-    rows2.push({ id, legacyDefault: true, name: { mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses" }[raw.artifactEffect], kind: raw.artifactEffect, level: 0, cost: half2(raw.chargeCost ?? 1), effectAmount: half2(raw.effectAmount), bonuses: raw.activeBonuses, description: "Converted from the artifact\u2019s former default action." });
-  }
-  return rows2;
+
+// ui/descriptions.js
+var escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var descriptionButton = (title, text3) => '<button type="button" class="cp-info" data-description-title="' + escape(title) + '" data-description-text="' + escape(text3 || "No description yet.") + '" aria-label="Description: ' + escape(title) + '" title="Show description">i</button>';
+function installDescriptions() {
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-description-title]");
+    if (!node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dialog = document.createElement("dialog");
+    dialog.className = "od-dialog od-description-dialog";
+    const title = document.createElement("h2"), body = document.createElement("p"), close = document.createElement("button");
+    title.textContent = node.dataset.descriptionTitle;
+    body.textContent = node.dataset.descriptionText || "No description yet.";
+    close.textContent = "Close";
+    close.type = "button";
+    close.setAttribute("aria-label", "Close description");
+    close.dataset.descriptionClose = "";
+    const finish = () => {
+      dialog.close();
+      dialog.remove();
+    };
+    close.onclick = finish;
+    dialog.addEventListener("cancel", (event2) => {
+      event2.preventDefault();
+      finish();
+    });
+    dialog.append(title, body, close);
+    document.body.append(dialog);
+    dialog.showModal();
+  });
 }
-function useArtifact(tracker, id, partName = "") {
-  const item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact");
-  if (!item?.equippedPart) throw Error("Equip the artifact before using it.");
-  const ability = item.abilities.find((a) => a.legacyDefault);
-  if (!ability) throw Error("Choose an artifact ability.");
-  activateImplantAbility(tracker, id, ability.id, { partName });
-  return item;
+
+// ui/magicTools.js
+function manaRow(o, gm) {
+  const pool = manaStatus(o);
+  return '<div class="cp-row av-mana-row"><span class="cp-pill" data-mana-current>' + pool.current + " / " + pool.max + " mana</span>" + (gm ? '<button type="button" data-magic-action="mana" title="Set current mana">Edit mana</button>' : "") + "</div>";
+}
+function abilityRows(o, gm) {
+  const pool = manaStatus(o), rows2 = o.abilities || [];
+  if (!rows2.length) return "";
+  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + "><span><b>" + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 level " + a.level + "/10 \xB7 " + a.cost + " mana</span></span>" + (a.kind === "attack" ? '<span class="cp-muted">DMG ' + a.damage + "</span>" : "") + "</button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
+}
+function abilityEditor(existing = {}, skills = []) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "od-dialog od-item-editor";
+  const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
+  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="10" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Narrative ability</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><fieldset data-status-fields><legend>Narrative status \xB7 optional</legend><label>Status name<input name="statusName" maxlength="80" value="' + esc(existing.statusName || "") + '"></label><label>Status description<textarea name="statusDescription" maxlength="2000">' + esc(existing.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target when used. This is a reminder without automatic combat effects.</p></fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
+  const form = dialog.querySelector("form");
+  form.elements.kind.value = existing.kind || "utility";
+  const toggle = () => {
+    form.querySelector("[data-status-fields]").hidden = form.elements.kind.value !== "utility";
+    form.querySelector("[data-attack-fields]").hidden = form.elements.kind.value !== "attack";
+    form.querySelector("[data-bonus-fields]").hidden = form.elements.kind.value !== "bonus";
+  };
+  form.elements.kind.onchange = toggle;
+  toggle();
+  document.body.append(dialog);
+  dialog.showModal();
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    form.querySelector("[data-cancel]").onclick = () => finish(null);
+    form.querySelector("[data-delete]")?.addEventListener("click", () => finish({ delete: true }));
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      finish(null);
+    });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(form)), bonuses = { attributes: {}, skills: {} };
+      for (const [key, value] of Object.entries(data)) {
+        if (key.startsWith("attr:") && Number(value)) bonuses.attributes[key.slice(5)] = Number(value);
+        if (key.startsWith("skill:") && Number(value)) bonuses.skills[key.slice(6)] = Number(value);
+      }
+      if (!data.name.trim()) {
+        form.elements.name.focus();
+        return;
+      }
+      finish(normalizeAbilities([{ ...data, id: existing.id || crypto.randomUUID(), bonuses }])[0]);
+    };
+  });
+}
+function installMagicTools(host) {
+  let busy = false;
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-magic-action]");
+    if (!node || busy || node.disabled) return;
+    busy = true;
+    (async () => {
+      const token = host.getToken(), id = token?.id;
+      if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
+      const action = node.dataset.magicAction, gm = host.getRole() === "GM", t = host.tracker(token), abilityId = node.dataset.id;
+      if (["add", "edit", "mana"].includes(action) && !gm) throw Error("Only the GM can edit abilities or mana.");
+      if (action === "prepare") {
+        host.prepare(id, "magic:" + abilityId);
+        host.status("Ability selected in Attack.", "success");
+        return;
+      }
+      if (action === "add" || action === "edit") {
+        const existing = t.avallon.abilities.find((a) => a.id === abilityId);
+        if (action === "edit" && !existing) throw Error("Ability no longer exists.");
+        const o = host.effective(token), value = await abilityEditor(existing, Object.keys(o.skills).map((key) => [key, o.skillLabels[key] || key]));
+        if (!value) return;
+        await host.update(id, (current2) => {
+          if (host.getRole() !== "GM") throw Error("Only the GM can edit abilities.");
+          const next = structuredClone(current2);
+          next.avallon.abilities = next.avallon.abilities.filter((a) => a.id !== abilityId);
+          next.avallon.effects = next.avallon.effects.filter((e) => e.id !== "ability-effect:" + abilityId);
+          if (!value.delete) {
+            if (next.avallon.abilities.length >= 100) throw Error("Ability limit is 100.");
+            next.avallon.abilities.push(value);
+          }
+          return next;
+        });
+      } else if (action === "mana") {
+        const dialog = document.createElement("dialog");
+        dialog.className = "od-dialog";
+        const pool = manaStatus(t.avallon);
+        dialog.innerHTML = "<form><h2>Current mana</h2><label>Mana \xB7 maximum " + pool.max + '<input name="current" type="number" min="0" max="' + pool.max + '" step="0.5" value="' + pool.current + '"></label><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></form>';
+        document.body.append(dialog);
+        dialog.showModal();
+        const value = await new Promise((resolve) => {
+          const finish = (v) => {
+            dialog.close();
+            dialog.remove();
+            resolve(v);
+          };
+          dialog.querySelector("[data-cancel]").onclick = () => finish(null);
+          dialog.addEventListener("cancel", (e) => {
+            e.preventDefault();
+            finish(null);
+          });
+          dialog.querySelector("form").onsubmit = (e) => {
+            e.preventDefault();
+            finish(Number(e.target.elements.current.value));
+          };
+        });
+        if (value === null) return;
+        await host.update(id, (current2) => {
+          if (host.getRole() !== "GM") throw Error("Only GM can set mana.");
+          const next = structuredClone(current2);
+          setMana(next.avallon, value);
+          return next;
+        });
+      } else if (action === "use") {
+        const configured = t.avallon.abilities.find((a) => a.id === abilityId);
+        if (configured?.kind === "utility" && configured.statusName) {
+          const result = await host.useNarrative(id, abilityId);
+          if (result) host.status(result.summary, "success");
+          return;
+        }
+        let used;
+        await host.update(id, (current2) => {
+          if (!host.canControl(token)) throw Error("Character unavailable.");
+          const next = structuredClone(current2);
+          used = activateAbility(next, abilityId);
+          next.lastRoll = { summary: used.name + " \xB7 used " + used.cost + " mana", outcome: "ability-use", actorName: token.name, eventId: 0, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
+          return next;
+        });
+        try {
+          await host.log(token.name + " uses " + used.name, used.cost + " mana spent", "success");
+        } catch {
+          host.status("Ability saved and mana spent; public log unavailable.", "error");
+          host.render();
+          return;
+        }
+      }
+      host.render();
+      host.status("Saved.", "success");
+    })().catch((e) => host.status(e.message, "error")).finally(() => {
+      busy = false;
+      host.render();
+    });
+  });
 }
 
 // itemGroups.js
@@ -855,7 +976,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
     if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (!["prosthesis", "resource", "artifact"].includes(item.kind)) delete definition.abilities;
+    if (!["prosthesis", "resource", "artifact", "armor", "shield"].includes(item.kind)) delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -880,10 +1001,141 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
   return result;
 }
 
+// ui/characterView.js
+var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
+function attributeCards(o, fields, editable) {
+  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
+    const delta = o.modifiers?.attributes?.[k] || 0;
+    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
+  }).join("")}</div></div>`;
+}
+function skillCards(o, groups, editable) {
+  const passives = Object.entries(ARMOR_TRAINING).filter(([k]) => Object.hasOwn(o.skills, k) && (editable || o.skills[k] === 1));
+  const skillRow = ([k, value]) => {
+    const name = o.skillLabels[k] || k, perks = o.skillPerks[k] || [], mod = o.modifiers?.skills?.[k] || 0;
+    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
+    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc(k) + '" aria-label="Roll ' + esc(name) + '"><span><b>' + esc(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc(k) + '" aria-label="Edit ' + esc(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
+  };
+  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + (editable ? '<button type="button" data-magic-action="add">+ Ability</button>' : "") + "</div>" + manaRow(o, editable) + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + abilityRows(o, editable) + prosthesisAbilityRows(o) + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
+}
+function effectChips(o, gm) {
+  const rows2 = o.effectRows || [];
+  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc(bonusText(e.bonuses))}"><b>${esc(e.name)}</b> ${esc(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc(e.id)}" aria-label="Remove ${esc(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
+}
+function inventoryView(tracker, gm) {
+  const o = tracker.avallon, inv = o.inventory;
+  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Remove item">\xD7</button>` : "";
+  const renderItem = (i) => {
+    const equipment = ["armor", "shield", "prosthesis"].includes(i.kind), broken = i.kind !== "prosthesis" && i.criticalMax > 0 && i.criticalDamage >= i.criticalMax;
+    const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
+    let controls = "";
+    if (i.kind === "artifact") {
+      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>";
+    } else if (equipment) {
+      const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
+      if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
+      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc(i.id) + '">Unequip</button>';
+      else {
+        const options = Object.entries(tracker.body).filter(([key, p]) => (gm || !p.hidden) && equipmentFits(i, key, p) && (i.kind === "prosthesis" || !inv.items.some((other) => ["armor", "shield"].includes(other.kind) && other.equippedPart === key)));
+        controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
+      }
+    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
+    return '<article class="cp-card"' + (i.kind === "artifact" ? ' data-artifact-open="' + esc(i.id) + '"' : "") + '><div class="cp-row">' + (i.kind === "artifact" ? '<button type="button" class="cp-item-open cp-skill-card" data-artifact-action="menu" data-id="' + esc(i.id) + '" aria-label="Open ' + esc(i.name) + ' actions"><b>' + esc(i.name) + "</b></button>" : "<b>" + esc(i.name) + "</b>") + '<span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
+  };
+  const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
+  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
+  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
+  const mags = "";
+  const weapons = ["melee", "ranged"].flatMap((kind) => o.weapons[kind].map((w, index) => {
+    let controls = "";
+    if (gm && kind === "ranged") {
+      controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload</button></div>';
+    }
+    return '<article class="cp-card"><div class="cp-row"><b>' + esc(w.name) + '</b><span class="cp-pill">' + esc(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 Capacity " + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
+  }));
+  const group = (label, html) => html ? `<div class="cp-section-title">${label}</div><div class="cp-list">${html}</div>` : "";
+  return `<div class="cp-screen">${gm ? '<div class="cp-row"><button type="button" data-od-action="add-item">+ Item</button><button type="button" data-od-action="open-item-pool">Campaign item pool</button></div>' : ""}${group("Equipped", equippedItems)}${group("Items", items)}${group("Weapons", weapons.join(""))}${group("Ammunition", ammo)}${!equippedItems && !items && !ammo && !mags && !weapons.length ? '<p class="cp-muted">Inventory is empty.</p>' : ""}</div>`;
+}
+function templatesView(library, gm) {
+  if (!gm) return "";
+  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
+}
+function prosthesisAbilityRows(o) {
+  const rows2 = activeImplantAbilities(o);
+  if (!rows2.length) return "";
+  return '<div class="cp-section-title">Item abilities</div>' + rows2.map(({ item, ability, key }) => {
+    const currency = item.kind === "artifact" ? "charges" : "mana", cost = ability.cost || 0, available = currency === "charges" ? item.charges : manaStatus(o).current, active = (o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id);
+    if (ability.kind === "check") return '<div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost ? "disabled" : "") + "><span><b>" + esc(ability.name) + '</b><small class="cp-muted"> \xB7 ' + esc(item.name) + '</small></span><span class="cp-skill-level"><strong>' + (ability.level || 0) + '/10</strong><span class="cp-pill">' + cost + " " + currency + "</span></span></button>" + descriptionButton(ability.name, ability.description) + "</div>";
+    return '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + '</span><span class="cp-pill">' + (ability.level || 0) + "/10 \xB7 " + cost + " " + currency + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '" ' + (available < cost ? "disabled" : "") + ">Prepare attack</button>" : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost || ability.kind === "bonus" && active ? "disabled" : "") + ">" + (ability.kind === "bonus" ? "Activate bonuses" : ability.kind === "mana" ? "Restore mana" : ability.kind === "heal" ? "Heal body HP" : "Use ability") + "</button>") + "</article>";
+  }).join("");
+}
+
+// itemUse.js
+function itemUseRequirement(avallon, item) {
+  const skill = String(item.useSkill || "").trim();
+  if (!skill) return { mode: "none", skill: "" };
+  const match = Object.keys(avallon.skills || {}).find((key) => key.toLowerCase() === skill.toLowerCase() || String(avallon.skillLabels?.[key] || key).toLowerCase() === skill.toLowerCase());
+  const learned = match && (avallon.availableSkills ? avallon.availableSkills.includes(match) : !Object.hasOwn(avallon.grantedSkills || {}, match) || match.startsWith("implant:"));
+  return learned ? { mode: "skill", skill: avallon.skillLabels?.[match] || skill, key: match, level: avallon.skills[match] } : { mode: "attribute", skill };
+}
+var passed = (result) => ["success", "critical-success"].includes(result.outcome);
+function resolveItemUseCheck({ avallon, item, attribute, rollCharacter, rollSkill }) {
+  const requirement = itemUseRequirement(avallon, item), stages = [];
+  if (requirement.mode === "none") return { ...requirement, stages, success: true };
+  if (requirement.mode === "attribute") {
+    if (!ATTRIBUTES.includes(attribute)) throw Error("Choose a characteristic for the unknown skill.");
+    const result2 = rollCharacter(avallon.attributes[attribute] || 0, 0);
+    stages.push({ kind: "attribute", name: attribute, result: result2 });
+    if (!passed(result2)) return { ...requirement, stages, success: false };
+  }
+  const result = rollSkill(requirement.mode === "skill" ? requirement.level : 0, 0);
+  stages.push({ kind: requirement.mode === "skill" ? "skill" : "random", name: requirement.mode === "skill" ? requirement.skill : "d100 vs d100", result });
+  return { ...requirement, stages, success: passed(result) };
+}
+function applyCheckedItemUse({ source, target, itemId, selection, attribute, effectId, rollCharacter, rollSkill, actorAvallon }) {
+  const item = source.avallon.inventory.items.find((row) => row.id === itemId);
+  if (!item || !["consumable", "medical"].includes(item.kind) || item.quantity < 1) throw Error("No usable item available.");
+  const projected = structuredClone(target);
+  useItemOnTracker(projected, item, selection, effectId);
+  const check = resolveItemUseCheck({ avallon: actorAvallon || effectiveAvallon(source.avallon), item, attribute, rollCharacter, rollSkill });
+  const same = source === target, nextSource = same && check.success ? projected : structuredClone(source);
+  nextSource.avallon.inventory.items.find((row) => row.id === itemId).quantity--;
+  return { ...check, itemName: item.name, source: nextSource, target: same ? nextSource : check.success ? projected : target };
+}
+function itemUseSummary(result) {
+  const stages = result.stages.map((stage) => stage.kind === "attribute" ? stage.name + ": " + stage.result.roll + " vs " + stage.result.finalAttribute + " (" + stage.result.result + ")" : stage.name + ": " + stage.result.totalPrimary + " vs " + stage.result.totalSecondary + " (" + stage.result.result + ")");
+  return result.itemName + " \xB7 " + (result.success ? "effect applied" : "no effect") + " \xB7 1 item spent" + (stages.length ? " \xB7 " + stages.join(" \u2192 ") : "");
+}
+
+// artifactRules.js
+var half2 = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
+function normalizeArtifact(raw = {}) {
+  const chargeMax = half2(raw.chargeMax);
+  return { chargeMax, charges: half2(raw.charges ?? chargeMax, chargeMax), artifactEffect: "property" };
+}
+function artifactAbilities(raw = {}) {
+  const rows2 = structuredClone(Array.isArray(raw.abilities) ? raw.abilities : []);
+  if (["mana", "heal", "bonus"].includes(raw.artifactEffect)) {
+    let id = "artifact-default";
+    while (rows2.some((a) => a.id === id)) id += "-legacy";
+    rows2.push({ id, legacyDefault: true, name: { mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses" }[raw.artifactEffect], kind: raw.artifactEffect, level: 0, cost: half2(raw.chargeCost ?? 1), effectAmount: half2(raw.effectAmount), bonuses: raw.activeBonuses, description: "Converted from the artifact\u2019s former default action." });
+  }
+  return rows2;
+}
+function useArtifact(tracker, id, partName = "") {
+  const item = tracker.avallon.inventory.items.find((i) => i.id === id && i.kind === "artifact");
+  if (!item?.equippedPart) throw Error("Equip the artifact before using it.");
+  const ability = item.abilities.find((a) => a.legacyDefault);
+  if (!ability) throw Error("Choose an artifact ability.");
+  activateImplantAbility(tracker, id, ability.id, { partName });
+  return item;
+}
+
 // inventory.js
 var LIMIT = 2e3;
 var int = (v, max = 999999) => Math.min(max, Math.max(0, Math.floor(Number(v) || 0)));
-var text = (v, max = 120) => String(v ?? "").trim().slice(0, max);
+var text2 = (v, max = 120) => String(v ?? "").trim().slice(0, max);
 var kinds = /* @__PURE__ */ new Set(["item", "consumable", "medical", "tool", "resource", "armor", "shield", "prosthesis", "artifact"]);
 function newId() {
   return globalThis.crypto.randomUUID();
@@ -896,25 +1148,25 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
   const items = rows(raw?.items, (input, i) => {
     const r = { ...input, kind: input.kind === "implant" ? "prosthesis" : input.kind };
     return {
-      id: text(r.id || `legacy-item-${i}`),
-      name: text(r.name) || "Item",
+      id: text2(r.id || `legacy-item-${i}`),
+      name: text2(r.name) || "Item",
       kind: kinds.has(r.kind) ? r.kind : "item",
       quantity: int(r.quantity ?? 1),
-      description: text(r.description, 2e3),
+      description: text2(r.description, 2e3),
       armor: int(r.armor, 999),
       subtype: ["grenade", "medkit", "repairkit", "stim"].includes(r.subtype) ? r.subtype : r.kind === "medical" ? "medkit" : "grenade",
       healCritical: int(r.healCritical ?? 1, 999),
-      useSkill: text(r.useSkill, 80),
-      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text(s, 40)).filter(Boolean))].slice(0, 100),
-      slot: text(r.slot || "any", 40),
+      useSkill: text2(r.useSkill, 80),
+      slots: [...new Set((Array.isArray(r.slots) ? r.slots : [r.slot || "any"]).map((s) => text2(s, 40)).filter(Boolean))].slice(0, 100),
+      slot: text2(r.slot || "any", 40),
       criticalMax: int(r.criticalMax, 999),
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (r.kind === "artifact" ? artifactAbilities(r) : Array.isArray(r.abilities) ? r.abilities : []).slice(0, 100).map((a, j) => ({ id: text2(a.id || "ability-" + j), name: text2(a.name) || "Ability", ...statusDefinition(a), level: int(a.level, 10), ...a.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Math.round(Math.max(0, Math.min(999, Number(a.effectAmount) || 0)) * 2) / 2, cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text2(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility", "check", "mana", "heal"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
-      equippedPart: text(r.equippedPart, 40),
+      equippedPart: text2(r.equippedPart, 40),
       previousArmor: int(r.previousArmor, 999)
     };
   });
@@ -941,7 +1193,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       items.push({ ...structuredClone(item), id, equippedPart: "" });
     }
   }
-  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text(k, 40), int(v, 999)])) };
+  return { version: 5, items, magazines, armorHp: Object.fromEntries(Object.entries(raw?.armorHp || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), { max: int(v?.max, 99999), remaining: int(v?.remaining, 99999) }])), baseMax: Object.fromEntries(Object.entries(raw?.baseMax || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), int(v, 99999)])), baseArmor: Object.fromEntries(Object.entries(raw?.baseArmor || {}).filter(([k]) => !["__proto__", "constructor", "prototype"].includes(k)).map(([k, v]) => [text2(k, 40), int(v, 999)])) };
 }
 function equipItem(tracker, id, partName, gm = true) {
   var _a;
@@ -1025,7 +1277,7 @@ function saveInventoryEntry(tracker, origin, values, id) {
   if (origin && origin.type !== dest) deleteInventoryEntry(tracker, origin.type, origin.id);
   const same = origin?.type === dest ? existing : null;
   if (kind === "ammo") {
-    const row2 = { id, name: values.name, description: text(values.description, 2e3), damage: Number(values.damage) || 0, penetration: Number(values.penetration) || 0, quantity: Number(values.quantity) || 0 };
+    const row2 = { id, name: values.name, description: text2(values.description, 2e3), damage: Number(values.damage) || 0, penetration: Number(values.penetration) || 0, quantity: Number(values.quantity) || 0 };
     if (same) Object.assign(same, row2);
     else {
       if (o.ammunition.length >= 200) throw new Error("Too many ammo types.");
@@ -1036,7 +1288,7 @@ function saveInventoryEntry(tracker, origin, values, id) {
   if (kind === "magazine") throw Error("Avallon uses internal weapon capacity.");
   if (kind === "weapon") {
     if ([...o.weapons.melee, ...o.weapons.ranged].some((w) => w !== same && w.name === values.name)) throw new Error("A weapon with this name already exists.");
-    const row2 = { id, name: values.name, description: text(values.description, 2e3), accuracy: Number(values.accuracy) || 0, damage: Number(values.damage) || 0 };
+    const row2 = { id, name: values.name, description: text2(values.description, 2e3), accuracy: Number(values.accuracy) || 0, damage: Number(values.damage) || 0 };
     if (weaponKind === "ranged") {
       row2.weaponCategory = normalizeWeaponCategory(values.weaponCategory);
       row2.rangeReduction = normalizeRangeReduction(values.rangeReduction);
@@ -1437,217 +1689,6 @@ function groupPoolEntries(entries) {
   return result(root);
 }
 
-// ui/magicTools.js
-function manaRow(o, gm) {
-  const pool = manaStatus(o);
-  return '<div class="cp-row av-mana-row"><span class="cp-pill" data-mana-current>' + pool.current + " / " + pool.max + " mana</span>" + (gm ? '<button type="button" data-magic-action="mana" title="Set current mana">Edit mana</button>' : "") + "</div>";
-}
-function abilityRows(o, gm) {
-  const pool = manaStatus(o), rows2 = o.abilities || [];
-  if (!rows2.length) return "";
-  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + "><span><b>" + esc(a.name) + '</b><span class="cp-pill">' + esc(a.kind) + " \xB7 level " + a.level + "/10 \xB7 " + a.cost + " mana</span></span>" + (a.kind === "attack" ? '<span class="cp-muted">DMG ' + a.damage + "</span>" : "") + "</button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
-}
-function abilityEditor(existing = {}, skills = []) {
-  const dialog = document.createElement("dialog");
-  dialog.className = "od-dialog od-item-editor";
-  const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
-  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="10" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Utility</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
-  const form = dialog.querySelector("form");
-  form.elements.kind.value = existing.kind || "utility";
-  const toggle = () => {
-    form.querySelector("[data-attack-fields]").hidden = form.elements.kind.value !== "attack";
-    form.querySelector("[data-bonus-fields]").hidden = form.elements.kind.value !== "bonus";
-  };
-  form.elements.kind.onchange = toggle;
-  toggle();
-  document.body.append(dialog);
-  dialog.showModal();
-  return new Promise((resolve) => {
-    const finish = (value) => {
-      dialog.close();
-      dialog.remove();
-      resolve(value);
-    };
-    form.querySelector("[data-cancel]").onclick = () => finish(null);
-    form.querySelector("[data-delete]")?.addEventListener("click", () => finish({ delete: true }));
-    dialog.addEventListener("cancel", (e) => {
-      e.preventDefault();
-      finish(null);
-    });
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(form)), bonuses = { attributes: {}, skills: {} };
-      for (const [key, value] of Object.entries(data)) {
-        if (key.startsWith("attr:") && Number(value)) bonuses.attributes[key.slice(5)] = Number(value);
-        if (key.startsWith("skill:") && Number(value)) bonuses.skills[key.slice(6)] = Number(value);
-      }
-      if (!data.name.trim()) {
-        form.elements.name.focus();
-        return;
-      }
-      finish(normalizeAbilities([{ ...data, id: existing.id || crypto.randomUUID(), bonuses }])[0]);
-    };
-  });
-}
-function installMagicTools(host) {
-  let busy = false;
-  document.addEventListener("click", (event) => {
-    const node = event.target.closest?.("[data-magic-action]");
-    if (!node || busy || node.disabled) return;
-    busy = true;
-    (async () => {
-      const token = host.getToken(), id = token?.id;
-      if (!token || !host.canControl(token)) throw Error("You cannot control this character.");
-      const action = node.dataset.magicAction, gm = host.getRole() === "GM", t = host.tracker(token), abilityId = node.dataset.id;
-      if (["add", "edit", "mana"].includes(action) && !gm) throw Error("Only the GM can edit abilities or mana.");
-      if (action === "prepare") {
-        host.prepare(id, "magic:" + abilityId);
-        host.status("Ability selected in Attack.", "success");
-        return;
-      }
-      if (action === "add" || action === "edit") {
-        const existing = t.avallon.abilities.find((a) => a.id === abilityId);
-        if (action === "edit" && !existing) throw Error("Ability no longer exists.");
-        const o = host.effective(token), value = await abilityEditor(existing, Object.keys(o.skills).map((key) => [key, o.skillLabels[key] || key]));
-        if (!value) return;
-        await host.update(id, (current2) => {
-          if (host.getRole() !== "GM") throw Error("Only the GM can edit abilities.");
-          const next = structuredClone(current2);
-          next.avallon.abilities = next.avallon.abilities.filter((a) => a.id !== abilityId);
-          next.avallon.effects = next.avallon.effects.filter((e) => e.id !== "ability-effect:" + abilityId);
-          if (!value.delete) {
-            if (next.avallon.abilities.length >= 100) throw Error("Ability limit is 100.");
-            next.avallon.abilities.push(value);
-          }
-          return next;
-        });
-      } else if (action === "mana") {
-        const dialog = document.createElement("dialog");
-        dialog.className = "od-dialog";
-        const pool = manaStatus(t.avallon);
-        dialog.innerHTML = "<form><h2>Current mana</h2><label>Mana \xB7 maximum " + pool.max + '<input name="current" type="number" min="0" max="' + pool.max + '" step="0.5" value="' + pool.current + '"></label><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></form>';
-        document.body.append(dialog);
-        dialog.showModal();
-        const value = await new Promise((resolve) => {
-          const finish = (v) => {
-            dialog.close();
-            dialog.remove();
-            resolve(v);
-          };
-          dialog.querySelector("[data-cancel]").onclick = () => finish(null);
-          dialog.addEventListener("cancel", (e) => {
-            e.preventDefault();
-            finish(null);
-          });
-          dialog.querySelector("form").onsubmit = (e) => {
-            e.preventDefault();
-            finish(Number(e.target.elements.current.value));
-          };
-        });
-        if (value === null) return;
-        await host.update(id, (current2) => {
-          if (host.getRole() !== "GM") throw Error("Only GM can set mana.");
-          const next = structuredClone(current2);
-          setMana(next.avallon, value);
-          return next;
-        });
-      } else if (action === "use") {
-        let used;
-        await host.update(id, (current2) => {
-          if (!host.canControl(token)) throw Error("Character unavailable.");
-          const next = structuredClone(current2);
-          used = activateAbility(next, abilityId);
-          next.lastRoll = { summary: used.name + " \xB7 used " + used.cost + " mana", outcome: "ability-use", actorName: token.name, eventId: 0, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
-          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
-          return next;
-        });
-        try {
-          await host.log(token.name + " uses " + used.name, used.cost + " mana spent", "success");
-        } catch {
-          host.status("Ability saved and mana spent; public log unavailable.", "error");
-          host.render();
-          return;
-        }
-      }
-      host.render();
-      host.status("Saved.", "success");
-    })().catch((e) => host.status(e.message, "error")).finally(() => {
-      busy = false;
-      host.render();
-    });
-  });
-}
-
-// ui/characterView.js
-var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
-function attributeCards(o, fields, editable) {
-  return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
-    const delta = o.modifiers?.attributes?.[k] || 0;
-    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="15" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
-  }).join("")}</div></div>`;
-}
-function skillCards(o, groups, editable) {
-  const passives = Object.entries(ARMOR_TRAINING).filter(([k]) => Object.hasOwn(o.skills, k) && (editable || o.skills[k] === 1));
-  const skillRow = ([k, value]) => {
-    const name = o.skillLabels[k] || k, perks = o.skillPerks[k] || [], mod = o.modifiers?.skills?.[k] || 0;
-    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
-    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc(k) + '" aria-label="Roll ' + esc(name) + '"><span><b>' + esc(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc(k) + '" aria-label="Edit ' + esc(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
-  };
-  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + (editable ? '<button type="button" data-magic-action="add">+ Ability</button>' : "") + "</div>" + manaRow(o, editable) + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + abilityRows(o, editable) + prosthesisAbilityRows(o) + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
-}
-function effectChips(o, gm) {
-  const rows2 = o.effectRows || [];
-  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc(bonusText(e.bonuses))}"><b>${esc(e.name)}</b> ${esc(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc(e.id)}" aria-label="Remove ${esc(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
-}
-function inventoryView(tracker, gm) {
-  const o = tracker.avallon, inv = o.inventory;
-  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Remove item">\xD7</button>` : "";
-  const renderItem = (i) => {
-    const equipment = ["armor", "shield", "prosthesis"].includes(i.kind), broken = i.kind !== "prosthesis" && i.criticalMax > 0 && i.criticalDamage >= i.criticalMax;
-    const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
-    let controls = "";
-    if (i.kind === "artifact") {
-      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>";
-    } else if (equipment) {
-      const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
-      if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
-      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc(i.id) + '">Unequip</button>';
-      else {
-        const options = Object.entries(tracker.body).filter(([key, p]) => (gm || !p.hidden) && equipmentFits(i, key, p) && (i.kind === "prosthesis" || !inv.items.some((other) => ["armor", "shield"].includes(other.kind) && other.equippedPart === key)));
-        controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
-      }
-    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
-    return '<article class="cp-card"' + (i.kind === "artifact" ? ' data-artifact-open="' + esc(i.id) + '"' : "") + '><div class="cp-row">' + (i.kind === "artifact" ? '<button type="button" class="cp-item-open cp-skill-card" data-artifact-action="menu" data-id="' + esc(i.id) + '" aria-label="Open ' + esc(i.name) + ' actions"><b>' + esc(i.name) + "</b></button>" : "<b>" + esc(i.name) + "</b>") + '<span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
-  };
-  const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
-  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
-  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
-  const mags = "";
-  const weapons = ["melee", "ranged"].flatMap((kind) => o.weapons[kind].map((w, index) => {
-    let controls = "";
-    if (gm && kind === "ranged") {
-      controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload</button></div>';
-    }
-    return '<article class="cp-card"><div class="cp-row"><b>' + esc(w.name) + '</b><span class="cp-pill">' + esc(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 Capacity " + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
-  }));
-  const group = (label, html) => html ? `<div class="cp-section-title">${label}</div><div class="cp-list">${html}</div>` : "";
-  return `<div class="cp-screen">${gm ? '<div class="cp-row"><button type="button" data-od-action="add-item">+ Item</button><button type="button" data-od-action="open-item-pool">Campaign item pool</button></div>' : ""}${group("Equipped", equippedItems)}${group("Items", items)}${group("Weapons", weapons.join(""))}${group("Ammunition", ammo)}${!equippedItems && !items && !ammo && !mags && !weapons.length ? '<p class="cp-muted">Inventory is empty.</p>' : ""}</div>`;
-}
-function templatesView(library, gm) {
-  if (!gm) return "";
-  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
-}
-function prosthesisAbilityRows(o) {
-  const rows2 = activeImplantAbilities(o);
-  if (!rows2.length) return "";
-  return '<div class="cp-section-title">Item abilities</div>' + rows2.map(({ item, ability, key }) => {
-    const currency = item.kind === "artifact" ? "charges" : "mana", cost = ability.cost || 0, available = currency === "charges" ? item.charges : manaStatus(o).current, active = (o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id);
-    if (ability.kind === "check") return '<div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost ? "disabled" : "") + "><span><b>" + esc(ability.name) + '</b><small class="cp-muted"> \xB7 ' + esc(item.name) + '</small></span><span class="cp-skill-level"><strong>' + (ability.level || 0) + '/10</strong><span class="cp-pill">' + cost + " " + currency + "</span></span></button>" + descriptionButton(ability.name, ability.description) + "</div>";
-    return '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + '</span><span class="cp-pill">' + (ability.level || 0) + "/10 \xB7 " + cost + " " + currency + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '" ' + (available < cost ? "disabled" : "") + ">Prepare attack</button>" : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost || ability.kind === "bonus" && active ? "disabled" : "") + ">" + (ability.kind === "bonus" ? "Activate bonuses" : ability.kind === "mana" ? "Restore mana" : ability.kind === "heal" ? "Heal body HP" : "Use ability") + "</button>") + "</article>";
-  }).join("");
-}
-
 // ui/itemPoolView.js
 function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImport, onRefresh, onAccountSave, onAccountLoad }) {
   const dialog = document.createElement("dialog");
@@ -1672,8 +1713,8 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
     if (search) {
       const words = search.split(/\s+/);
       const matches = catalog.entries.filter((e) => {
-        const text2 = [e.blueprint.values.name, e.blueprint.values.kind, e.blueprint.values.description || "", ...poolCategoryPaths(e.blueprint).flat()].join(" ").toLowerCase();
-        return words.every((word) => text2.includes(word));
+        const text3 = [e.blueprint.values.name, e.blueprint.values.kind, e.blueprint.values.description || "", ...poolCategoryPaths(e.blueprint).flat()].join(" ").toLowerCase();
+        return words.every((word) => text3.includes(word));
       });
       list.innerHTML = rows2(matches) || '<p class="cp-muted">No matching items.</p>';
     } else {
@@ -1852,12 +1893,12 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
   const abilityDrafts = new Map((existing.abilities || []).map((a) => [a.id, structuredClone(a)]));
   function abilityRow(a = {}) {
     const kind = a.kind || (a.id ? "skill" : "utility"), currency = values.kind === "artifact" ? "Charge cost" : "Mana cost";
-    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["check", "Skill check"], ["utility", "Use property"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"], ...values.kind === "artifact" ? [["mana", "Restore mana"], ["heal", "Heal body HP"]] : []], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ["mana", "heal"].includes(kind) ? field("abilityAmount", kind === "mana" ? "Mana restored" : "Body HP restored", a.effectAmount || 1, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
+    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["check", "Skill check"], ["utility", "Narrative ability"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"], ...values.kind === "artifact" ? [["mana", "Restore mana"], ["heal", "Heal body HP"]] : []], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ["mana", "heal"].includes(kind) ? field("abilityAmount", kind === "mana" ? "Mana restored" : "Body HP restored", a.effectAmount || 1, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + (kind === "utility" ? '<details class="od-narrative-fields" ' + (a.statusName ? "open" : "") + '><summary>Narrative status \xB7 optional</summary><label>Status name<input name="abilityStatusName" maxlength="80" value="' + esc(a.statusName || "") + '"></label><label>Status description<textarea name="abilityStatusDescription" maxlength="2000">' + esc(a.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target on use. Adds a reminder only.</p></details>' : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
   }
   function readAbilityRow(row) {
     const previous = abilityDrafts.get(row.dataset.abilityId) || {}, get2 = (name, fallback = "") => row.querySelector('[name="' + name + '"]')?.value ?? fallback;
     const bonusRoot = row.querySelector('[data-bonus-editor="ability"]'), bonuses = bonusRoot ? readCompactBonuses(bonusRoot) : structuredClone(previous.bonuses || { attributes: {}, skills: {} });
-    const ability = { id: row.dataset.abilityId, name: get2("abilityName"), kind: get2("abilityKind"), cost: Number(get2("abilityCost", previous.cost)) || 0, ...previous.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Number(get2("abilityAmount", previous.effectAmount)) || 0, level: Number(get2("abilityLevel", previous.level)) || 0, description: get2("abilityDescription"), damage: Number(get2("abilityDamage", previous.damage)) || 0, accuracy: Number(get2("abilityAccuracy", previous.accuracy)) || 0, bonuses };
+    const ability = { id: row.dataset.abilityId, name: get2("abilityName"), kind: get2("abilityKind"), statusName: get2("abilityStatusName", previous.statusName || ""), statusDescription: get2("abilityStatusDescription", previous.statusDescription || ""), cost: Number(get2("abilityCost", previous.cost)) || 0, ...previous.legacyDefault ? { legacyDefault: true } : {}, effectAmount: Number(get2("abilityAmount", previous.effectAmount)) || 0, level: Number(get2("abilityLevel", previous.level)) || 0, description: get2("abilityDescription"), damage: Number(get2("abilityDamage", previous.damage)) || 0, accuracy: Number(get2("abilityAccuracy", previous.accuracy)) || 0, bonuses };
     abilityDrafts.set(ability.id, ability);
     return ability;
   }
@@ -1906,9 +1947,10 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     if (["armor", "shield", "prosthesis"].includes(kind)) {
       html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "prosthesis" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "prosthesis" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc(key) + '"')).join("") + "</fieldset>";
       if (kind === "prosthesis") html += '<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
-      if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable) + bonusEditor(values.bonuses, true, false);
+      if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable);
+      html += compactBonusEditor(values.bonuses, skillChoices, { label: ["armor", "shield"].includes(kind) ? "Enchantments \xB7 passive bonuses" : "Passive bonuses" });
     }
-    if (["resource", "artifact", "prosthesis"].includes(kind)) html += '<fieldset class="od-item-abilities"><legend>Item abilities</legend><p class="cp-muted">' + (kind === "resource" ? "Available while carried \xB7 uses mana." : kind === "artifact" ? "Available while equipped \xB7 uses artifact charges." : "Available while equipped \xB7 uses mana.") + "</p><div data-abilities>" + (values.abilities || []).map(abilityRow).join("") + '</div><button type="button" data-add-ability title="Add ability">+ Ability</button></fieldset>';
+    if (["resource", "artifact", "prosthesis", "armor", "shield"].includes(kind)) html += '<fieldset class="od-item-abilities"><legend>Item abilities</legend><p class="cp-muted">' + (kind === "resource" ? "Available while carried \xB7 uses mana." : kind === "artifact" ? "Available while equipped \xB7 uses artifact charges." : "Available while equipped \xB7 uses mana.") + "</p><div data-abilities>" + (values.abilities || []).map(abilityRow).join("") + '</div><button type="button" data-add-ability title="Add ability">+ Ability</button></fieldset>';
     host.innerHTML = html;
     if (form.elements.weaponCategory && !existing.id) form.elements.weaponCategory.required = true;
     for (const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"],[name^="activeAttr:"],[name^="activeSkill:"]')) input.min = "-999";
@@ -5200,8 +5242,8 @@ var ImageBuilder = class extends GenericItemBuilder {
     };
     this._textItemType = "LABEL";
   }
-  text(text2) {
-    this._text = text2;
+  text(text3) {
+    this._text = text3;
     return this.self();
   }
   textItemType(textItemType) {
@@ -5348,8 +5390,8 @@ var TextBuilder = class extends GenericItemBuilder {
     this._item.layer = "TEXT";
     this._item.name = "Text";
   }
-  text(text2) {
-    this._text = text2;
+  text(text3) {
+    this._text = text3;
     return this.self();
   }
   width(width) {
@@ -5794,7 +5836,7 @@ function instantiateTemplate(current2, template, sanitize) {
   }
   for (const w of data.avallon.weapons.melee) w.id = newId();
   for (const item of data.avallon.inventory.items) item.id = newId();
-  const next = sanitize({ ...current2, ...data, avallon: { ...current2.avallon, ...data.avallon, mana: { spent: 0 }, effects: [], vehicle: data.avallon.vehicle, owner: current2.avallon.owner, attackDraft: { targetTokenId: "", targetTokenName: "" } } });
+  const next = sanitize({ ...current2, ...data, avallon: { ...current2.avallon, ...data.avallon, mana: { spent: 0 }, effects: [], statuses: [], vehicle: data.avallon.vehicle, owner: current2.avallon.owner, attackDraft: { targetTokenId: "", targetTokenName: "" } } });
   return next;
 }
 function readLibrary(storage, sanitize) {
@@ -5878,11 +5920,11 @@ function installCharacterTools(host) {
     let count = Object.entries(metadata).filter(([key, value]) => key.startsWith(ITEM_POOL_PREFIX) && value && !value.deleted).length;
     for (const blueprint of blueprints) {
       validateBlueprint(blueprint);
-      const text2 = blueprintText(blueprint);
-      let id = knownBlueprintIds.get(text2);
+      const text3 = blueprintText(blueprint);
+      let id = knownBlueprintIds.get(text3);
       if (!id) {
         id = await blueprintId(blueprint);
-        knownBlueprintIds.set(text2, id);
+        knownBlueprintIds.set(text3, id);
       }
       const key = ITEM_POOL_PREFIX + id;
       if (metadata[key] && (automatic || !metadata[key].deleted)) continue;
@@ -6324,6 +6366,43 @@ function installCharacterTools(host) {
   }, syncPool: schedulePoolScan, isBusy: () => busy, renderInventory: (tracker) => disabledWhileBusy(inventoryView(tracker, getRole() === "GM")), renderTemplates: () => getRole() !== "GM" ? "" : disabledWhileBusy(`${storageError ? `<p class="cp-banner err">Local library could not be read: ${esc(storageError)}. Export JSON before replacing it.</p>` : ""}${templatesView(library, getRole() === "GM")}`) };
 }
 
+// ui/statusTools.js
+function statusView(o, gm) {
+  const rows2 = o.statuses || [];
+  if (!rows2.length && !gm) return "";
+  return '<div class="cp-statuses cp-row">' + rows2.map((s) => '<span class="cp-status" data-narrative-status="' + esc(s.id) + '"><b>' + esc(s.name) + "</b>" + descriptionButton(s.name, [s.description, s.sourceName ? "Source: " + s.sourceName : ""].filter(Boolean).join("\n")) + (gm ? '<button type="button" data-status-action="remove" data-id="' + esc(s.id) + '" aria-label="Remove ' + esc(s.name) + ' status" title="Remove status">\xD7</button>' : "") + "</span>").join("") + (gm ? '<button type="button" data-status-action="add" title="Add narrative status">+ Status</button>' : "") + "</div>";
+}
+function installStatusTools(host) {
+  let busy = false;
+  document.addEventListener("click", (event) => {
+    const node = event.target.closest?.("[data-status-action]");
+    if (!node || busy) return;
+    busy = true;
+    (async () => {
+      if (host.getRole() !== "GM") throw Error("Only the GM can manage statuses manually.");
+      const token = host.getToken();
+      if (!token) throw Error("Select a character.");
+      let value;
+      if (node.dataset.statusAction === "add") {
+        value = await formDialog("Status \xB7 " + token.name, [{ name: "name", label: "Status name", required: true }, { name: "description", label: "Description", type: "textarea" }], { message: "Narrative reminder. This does not change armor, damage, attributes or rolls." });
+        if (!value) return;
+      }
+      const id = crypto.randomUUID();
+      await host.update(token.id, (current2) => {
+        if (host.getRole() !== "GM") throw Error("Only the GM can manage statuses.");
+        const next = structuredClone(current2);
+        if (value) addNarrativeStatus(next, { id, name: value.name, description: value.description, sourceName: "GM" });
+        else next.avallon.statuses = next.avallon.statuses.filter((s) => s.id !== node.dataset.id);
+        return next;
+      });
+      host.status("Status updated.", "success");
+    })().catch((e) => host.status(e.message, "error")).finally(() => {
+      busy = false;
+      host.render();
+    });
+  });
+}
+
 // ui/artifactMenu.js
 var artifactActionLabel = (kind) => ({ mana: "Restore mana", heal: "Heal body HP", bonus: "Activate bonuses", attack: "Attack", check: "Skill check", utility: "Use property" })[kind] || kind;
 function artifactActions(item, effects = []) {
@@ -6646,10 +6725,10 @@ function installTooltips() {
   };
   const show = (node) => {
     hide();
-    const text2 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
-    if (!text2) return;
+    const text3 = node.dataset.descriptionText || node.dataset.tooltip || node.getAttribute("title") || node.getAttribute("aria-label");
+    if (!text3) return;
     active = node;
-    tip.textContent = text2;
+    tip.textContent = text3;
     node.setAttribute("aria-describedby", tip.id);
     const host = node.closest("dialog[open]") || document.body;
     if (tip.matches(":popover-open")) tip.hidePopover();
@@ -6706,25 +6785,25 @@ var paths = {
   window: "M3 3h18v18H3Z M3 8h18 M8 8v13",
   copy: "M8 8h13v13H8Z M16 8V3H3v13h5"
 };
-function iconFor(text2) {
-  if (/description/i.test(text2)) return "info";
-  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text2)) return "close";
-  if (/edit|rename|set rounds|set magazine/i.test(text2)) return "edit";
-  if (/duplicate/i.test(text2)) return "copy";
-  if (/export|empty to|load from/i.test(text2)) return "download";
-  if (/import/i.test(text2)) return "upload";
-  if (/account/i.test(text2)) return "cloud";
-  if (/save/i.test(text2)) return "save";
-  if (/add|new|^\+/i.test(text2)) return "plus";
-  if (/reload|refresh|rebuild|fill|sync/i.test(text2)) return "refresh";
-  if (/select|pick|target|focus/i.test(text2)) return "target";
-  if (/roll|d100|dice/i.test(text2)) return "dice";
-  if (/attack|resolve/i.test(text2)) return "attack";
-  if (/heal|repair/i.test(text2)) return "heal";
-  if (/equip/i.test(text2)) return "shield";
-  if (/template/i.test(text2)) return "book";
-  if (/hud|window|open/i.test(text2)) return "window";
-  if (/use|apply/i.test(text2)) return "play";
+function iconFor(text3) {
+  if (/description/i.test(text3)) return "info";
+  if (/cancel|clear|remove|delete|unequip|detach|close/i.test(text3)) return "close";
+  if (/edit|rename|set rounds|set magazine/i.test(text3)) return "edit";
+  if (/duplicate/i.test(text3)) return "copy";
+  if (/export|empty to|load from/i.test(text3)) return "download";
+  if (/import/i.test(text3)) return "upload";
+  if (/account/i.test(text3)) return "cloud";
+  if (/save/i.test(text3)) return "save";
+  if (/add|new|^\+/i.test(text3)) return "plus";
+  if (/reload|refresh|rebuild|fill|sync/i.test(text3)) return "refresh";
+  if (/select|pick|target|focus/i.test(text3)) return "target";
+  if (/roll|d100|dice/i.test(text3)) return "dice";
+  if (/attack|resolve/i.test(text3)) return "attack";
+  if (/heal|repair/i.test(text3)) return "heal";
+  if (/equip/i.test(text3)) return "shield";
+  if (/template/i.test(text3)) return "book";
+  if (/hud|window|open/i.test(text3)) return "window";
+  if (/use|apply/i.test(text3)) return "play";
   return "box";
 }
 function installCompactButtons() {
@@ -6732,12 +6811,12 @@ function installCompactButtons() {
   const enhance = () => {
     for (const button of document.querySelectorAll("button")) {
       if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
-      const text2 = button.textContent.trim();
-      if (!text2 || text2.length <= 2) continue;
-      button.title = text2;
-      button.setAttribute("aria-label", text2);
+      const text3 = button.textContent.trim();
+      if (!text3 || text3.length <= 2) continue;
+      button.title = text3;
+      button.setAttribute("aria-label", text3);
       button.classList.add("od-icon-button");
-      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text2)]}"></path></svg>`;
+      button.innerHTML = `<svg data-compact-icon viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[iconFor(text3)]}"></path></svg>`;
     }
   };
   let scheduled = false;
@@ -6875,6 +6954,7 @@ var DEFAULT_TRACKER_DATA = {
       Magic: 0
     },
     inventory: { version: 3, items: [], magazines: [], baseArmor: {}, baseMax: {} },
+    statuses: [],
     abilities: [],
     mana: { spent: 0 },
     effects: [],
@@ -7073,7 +7153,7 @@ function sanitizeAvallonData(raw) {
     if (description) next.skillDescriptions[skillName] = description;
     next.skillLabels[skillName] = String(rawSkillLabels[skillName] ?? skillName).trim().slice(0, 40) || skillName;
     next.skillPerks[skillName] = Array.isArray(rawSkillPerks[skillName]) ? rawSkillPerks[skillName].map((perk) => String(perk ?? "").trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
-    const perkDescriptions = Object.fromEntries(next.skillPerks[skillName].map((name) => [name, String(raw.skillPerkDescriptions?.[skillName]?.[name] || "").trim().slice(0, 2e3)]).filter(([, text2]) => text2));
+    const perkDescriptions = Object.fromEntries(next.skillPerks[skillName].map((name) => [name, String(raw.skillPerkDescriptions?.[skillName]?.[name] || "").trim().slice(0, 2e3)]).filter(([, text3]) => text3));
     if (Object.keys(perkDescriptions).length) next.skillPerkDescriptions[skillName] = perkDescriptions;
   }
   next.weapons.melee = sanitizeWeapons(raw.weapons?.melee);
@@ -7089,6 +7169,7 @@ function sanitizeAvallonData(raw) {
     const item = next.inventory.items.find((i) => effect.id === "artifact-effect:" + i.id), legacy = item?.abilities.find((a) => a.legacyDefault);
     return legacy ? { ...effect, id: "implant-effect:" + item.id + ":" + legacy.id, sourceItemId: item.id } : effect;
   });
+  next.statuses = normalizeStatuses(raw.statuses);
   next.abilities = normalizeAbilities(raw.abilities);
   next.mana = normalizeMana(raw.mana);
   if (raw.vehicle?.enabled) next.vehicle = { enabled: true, pilotTokenId: String(raw.vehicle.pilotTokenId || "").trim().slice(0, 120) };
@@ -8946,10 +9027,10 @@ async function importSelectedTokenData(file) {
     setStatus("Choose an import file first.", "error");
     return;
   }
-  const text2 = await file.text();
+  const text3 = await file.text();
   let parsed;
   try {
-    parsed = JSON.parse(text2);
+    parsed = JSON.parse(text3);
   } catch (error) {
     throw new Error("Import file must contain valid JSON.");
   }
@@ -9851,6 +9932,7 @@ function renderSelectedToken() {
             ${renderOwnerFields({ avallon }, gmOnlyDisabled)}
           ` : ""}
       ${characterTools ? characterTools.renderVehicle(token) : ""}
+      ${isEditable() || token.visible !== false || canUseToken(token) ? statusView(data.avallon, isEditable()) : ""}
       ${canUseToken(token) ? effectChips(avallon, isEditable()) : ""}
       ${canUseToken(token) ? renderCharacteristicsBlock({ avallon }) : ""}
       ${canUseToken(token) ? renderEnglishSkillsBlock({ avallon }, gmOnlyDisabled) : ""}
@@ -10523,10 +10605,36 @@ function getActionFieldValue(selector) {
   }
   return field.value;
 }
+async function useNarrativeStatus(sourceId, itemId, abilityId) {
+  const actor = getCharacterById(sourceId);
+  if (!actor || !canUseToken(actor)) throw Error("Character unavailable.");
+  const initial = getTrackerData(actor), ability = itemId ? checkItemAbilityCost(initial, itemId, abilityId).ability : initial.avallon.abilities.find((a) => a.id === abilityId);
+  if (!ability || ability.kind !== "utility" || !ability.statusName) throw Error("Narrative status ability unavailable.");
+  const expected = JSON.stringify([ability.kind, ability.cost, ability.statusName, ability.statusDescription]);
+  const choice = await formDialog("Apply status \xB7 " + ability.statusName, [{ name: "target", label: "Target", value: "", options: [["", "Self"], ...characterListCache.filter((t) => t.id !== sourceId && (isEditable() || t.visible !== false)).map((t) => [t.id, getCharacterName(t)])] }], { submitLabel: "Use ability", message: ability.statusDescription || ability.description || "Narrative reminder only." });
+  if (!choice) return null;
+  const targetId = choice.target || sourceId, statusId = crypto.randomUUID();
+  let result;
+  await queueTrackerWrite(sourceId, () => lib_default.scene.items.updateItems([.../* @__PURE__ */ new Set([sourceId, targetId])], (items) => {
+    const source = items.find((t) => t.id === sourceId), target = items.find((t) => t.id === targetId);
+    if (!source || !target || !canUseToken(source) || !isEditable() && target.id !== sourceId && target.visible === false) throw Error("Character or target unavailable.");
+    const sourceData = getTrackerData(source), targetData = source === target ? sourceData : getTrackerData(target);
+    result = applyNarrativeAbility({ source: sourceData, target: targetData, itemId, abilityId, sourceTokenId: sourceId, sourceName: source.visible === false ? "" : getCharacterName(source), statusId, expected });
+    result.summary = result.used.name + " \u2192 " + getCharacterName(target) + " \xB7 " + result.status.name + " \xB7 " + result.used.cost + " " + result.used.currency + " spent";
+    result.source.lastRoll = { eventId: 0, actorName: getCharacterName(source), summary: result.summary, outcome: "narrative-status", timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+    result.source.history = [result.source.lastRoll, ...result.source.history || []].slice(0, 12);
+    source.metadata[META_KEY] = sanitizeTrackerData(result.source);
+    if (source !== target) target.metadata[META_KEY] = sanitizeTrackerData(result.target);
+  }));
+  await syncState();
+  scheduleRender();
+  return result;
+}
 async function useItemAbility(tokenId, itemId, abilityId) {
   const actor = getCharacterById(tokenId);
   if (!actor || !canUseToken(actor)) throw Error("Character unavailable.");
   const tracker = getTrackerData(actor), source = checkItemAbilityCost(tracker, itemId, abilityId);
+  if (source.ability.kind === "utility" && source.ability.statusName) return useNarrativeStatus(tokenId, itemId, abilityId);
   let partName = "";
   if (source.ability.kind === "heal") {
     const choice = await formDialog("Use " + source.ability.name, [{ name: "part", label: "Body part", options: Object.entries(tracker.body).filter(([, p]) => isEditable() || !p.hidden).map(([key, p]) => [key, p.label || key]) }], { submitLabel: "Use charges" });
@@ -11761,8 +11869,9 @@ lib_default.onReady(async () => {
       void targetDistance.clear();
     });
     new MutationObserver(() => paintAbilityAttackFields()).observe(ui.selectedTokenPanel, { childList: true, subtree: true });
+    installStatusTools({ getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, update: updateTrackerData2, status: setStatus, render: scheduleRender });
     installArtifactTools({ useAbility: useItemAbility, prepareAbility: prepareItemAbilityAttack, getToken: (id) => getCharacterById(id ?? activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, update: updateTrackerData2, render: scheduleRender, status: setStatus });
-    installMagicTools({ getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
+    installMagicTools({ useNarrative: (id, abilityId) => useNarrativeStatus(id, "", abilityId), getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
       const t = getCharacterById(id), w = getWeaponByName(t, key);
       syncAttackWeaponInputs(id, key, w.damage, w.accuracy);
       scheduleRender();

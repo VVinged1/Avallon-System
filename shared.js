@@ -1,3 +1,4 @@
+import {normalizeStatuses} from './statusRules.js';
 import {SKILL_CATEGORIES,skillCap,normalizeSkillCategory} from './avallonConfig.js';
 import {normalizeAbilities,normalizeMana} from './magicRules.js';
 import { normalizeEffects, effectiveAvallon, reconcileEquipment, setCombinedPartHp, setCombinedPartMax, ARMOR_TRAINING } from "./characterRules.js";
@@ -126,7 +127,7 @@ export const DEFAULT_TRACKER_DATA = {
       Magic: 0,
     },
     inventory: { version: 3, items: [], magazines: [], baseArmor: {}, baseMax: {} },
-    abilities:[],mana:{spent:0},effects: [], preferences: {parryMode:"off"},
+    statuses:[],abilities:[],mana:{spent:0},effects: [], preferences: {parryMode:"off"},
     ammunition: [],
     weapons: {
       melee: [],
@@ -377,6 +378,7 @@ export function sanitizeAvallonData(raw) {
   }
   next.inventory = normalizeInventory({...raw.inventory,magazines:[]}, next.weapons.ranged,'',next.skillLabels);
   next.effects = normalizeEffects(raw.effects).map(effect=>{const item=next.inventory.items.find(i=>effect.id==='artifact-effect:'+i.id),legacy=item?.abilities.find(a=>a.legacyDefault);return legacy?{...effect,id:'implant-effect:'+item.id+':'+legacy.id,sourceItemId:item.id}:effect;});
+  next.statuses=normalizeStatuses(raw.statuses);
   next.abilities=normalizeAbilities(raw.abilities);next.mana=normalizeMana(raw.mana);
   if(raw.vehicle?.enabled)next.vehicle={enabled:true,pilotTokenId:String(raw.vehicle.pilotTokenId||'').trim().slice(0,120)};
   next.preferences = {parryMode: ["off","1","2","3","4","5"].includes(raw.preferences?.parryMode) ? raw.preferences.parryMode : "off"};
