@@ -38,3 +38,8 @@ body {
 :not(html):not(body)::-webkit-scrollbar-thumb:active {
   background-color: rgba(255, 255, 255, 0.61);
 }
+
+.initiative-focus{background:none;border:0;color:inherit;font:inherit;font-size:12px;font-weight:600;padding:0;height:30px;min-height:30px;max-height:30px;flex-shrink:0;line-height:15px;text-align:left;cursor:pointer;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;}
+.initiative-focus:focus-visible{outline:2px solid #d3ad6b;outline-offset:2px;border-radius:3px;}
+.initiative-card[data-active="true"]{box-shadow:inset 0 0 0 1px #d3ad6b;}
+.initiative-strip{scrollbar-width:thin;scroll-snap-type:x proximity;}.initiative-card{scroll-snap-align:start;}

@@ -646,6 +646,22 @@ function armorHealth(tracker, partName) {
   const gear = tracker.avallon.inventory.items.filter((i) => ["armor", "shield"].includes(i.kind) && i.equippedPart === partName && i.quantity > 0);
   return { max: gear.reduce((sum, i) => sum + i.criticalMax, 0), remaining: gear.reduce((sum, i) => sum + i.criticalMax - i.criticalDamage, 0) };
 }
+function partWounds(tracker, partName) {
+  const part = tracker.body?.[partName];
+  if (!part) return { serious: 0, critical: 0 };
+  const pool = armorHealth(tracker, partName), bodyMax = Math.max(0, part.max - pool.max), bodyCurrent = Math.max(0, part.current - pool.remaining);
+  return { serious: Math.max(0, part.serious || 0), critical: Math.max(0, bodyMax - bodyCurrent) };
+}
+function restorePartWound(tracker, partName, kind) {
+  const part = tracker.body?.[partName];
+  if (!part) throw Error("Body part no longer exists.");
+  if (!["serious", "critical"].includes(kind)) throw Error("Unknown wound type.");
+  const wounds = partWounds(tracker, partName);
+  if (!wounds[kind]) return false;
+  if (kind === "serious") part.serious = Math.max(0, part.serious - 1);
+  else part.current = Math.min(part.max, part.current + 1);
+  return true;
+}
 function setCombinedPartMax(tracker, partName, value) {
   const part = tracker.body[partName];
   if (!part) return;
@@ -6863,7 +6879,7 @@ function installCompactButtons() {
   installTooltips();
   const enhance = () => {
     for (const button of document.querySelectorAll("button")) {
-      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
+      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action,.od-wound-button") || button.querySelector("[data-compact-icon]")) continue;
       const text3 = button.textContent.trim();
       if (!text3 || text3.length <= 2) continue;
       button.title = text3;
@@ -9999,9 +10015,11 @@ function renderSelectedToken() {
       const part = data.body[partName];
       const fixedPart = partName === "Torso" || partName === SPECIAL_PART_NAME;
       const penaltyDisabled = part.slot !== "other" ? "disabled" : bodyFieldDisabled;
+      const wounds = partWounds(data, partName);
+      const woundButtons = ["serious", "critical"].map((kind) => '<button type="button" class="od-wound-button" data-action="restore-part-wound" data-part="' + escapeHtml(partName) + '" data-wound="' + kind + '" title="' + (kind === "serious" ? "Heal 1 serious wound" : "Heal 1 body critical \xB7 armor is repaired separately") + '" aria-label="Heal ' + kind + " wound on " + escapeHtml(getBodyPartLabel(data, partName)) + '" ' + (bodyFieldDisabled || !wounds[kind] ? "disabled" : "") + "><span>" + (kind === "serious" ? "S\u2212" : "C+") + "</span><small>" + wounds[kind] + "</small></button>").join("");
       return `<tr>
                         <td><div class="body-part-name-line">${fixedPart ? `<span class="body-part-eye-spacer" title="Always visible"></span>` : `<label class="check-label body-part-visible" title="Visible to players"><input type="checkbox" data-action="toggle-part-hidden" data-part="${escapeHtml(partName)}" ${part.hidden ? "" : "checked"} ${bodyFieldDisabled}><span></span></label>`}<input class="body-part-name-input" type="text" maxlength="40" value="${escapeHtml(getBodyPartLabel(data, partName))}" data-action="rename-body-part" data-part="${escapeHtml(partName)}" ${fixedPart ? "disabled" : bodyFieldDisabled}>${fixedPart ? "" : `<button type="button" class="body-part-remove" data-action="remove-body-part" data-part="${escapeHtml(partName)}" title="Remove body part" aria-label="Remove ${escapeHtml(partName)}" ${bodyFieldDisabled}>\xD7</button>`}</div></td>
-                        <td><div class="inline-stepper"><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="-1" ${bodyFieldDisabled}>-</button><input type="text" inputmode="numeric" maxlength="3" value="${part.current}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="current" ${bodyFieldDisabled}><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="1" ${bodyFieldDisabled}>+</button></div></td>
+                        <td><div class="inline-stepper"><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="-1" ${bodyFieldDisabled}>-</button><input type="text" inputmode="numeric" maxlength="3" value="${part.current}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="current" ${bodyFieldDisabled}><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="1" ${bodyFieldDisabled}>+</button></div><div class="od-part-recovery">${woundButtons}</div></td>
                         <td><input class="compact-input" type="text" inputmode="numeric" maxlength="3" value="${part.max}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="max" ${bodyFieldDisabled}></td>
                         <td><input class="compact-input" type="text" inputmode="numeric" maxlength="3" value="${part.armor}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="armor" ${bodyFieldDisabled}></td>
                         <td>${partName === "Torso" ? "Main" : partName === SPECIAL_PART_NAME ? "Special" : `<select data-action="set-field" data-part="${escapeHtml(partName)}" data-field="slot" ${bodyFieldDisabled}>${BODY_PART_SLOTS.map((slot) => `<option value="${slot}" ${part.slot === slot ? "selected" : ""}>${BODY_PART_SLOT_LABELS[slot]}</option>`).join("")}</select>`}</td>
@@ -10114,6 +10132,26 @@ async function reloadTokenVisuals() {
   scheduleRender();
   await syncTargetHighlight();
   setStatus(`${getCharacterName(token)} visuals reloaded.`, "success");
+}
+var woundRecoveries = /* @__PURE__ */ new Set();
+async function recoverPartWound(partName, kind) {
+  const token = getCharacterById(activeTokenId);
+  if (!token || !canEditTokenData(token)) throw Error("You cannot heal this character.");
+  const key = token.id + ":" + partName + ":" + kind;
+  if (woundRecoveries.has(key)) return;
+  woundRecoveries.add(key);
+  try {
+    await updateTrackerData2(token.id, (current2) => {
+      if (!canEditTokenData(getCharacterById(token.id))) throw Error("Character unavailable.");
+      const next = structuredClone(current2);
+      restorePartWound(next, partName, kind);
+      return next;
+    });
+    await ensureOverlayForToken(token.id);
+    setStatus(getBodyPartLabel(getTrackerData(getCharacterById(token.id)), partName) + " \xB7 " + (kind === "serious" ? "serious wound healed" : "body critical healed"), "success");
+  } finally {
+    woundRecoveries.delete(key);
+  }
 }
 async function healLimbs() {
   const token = getCharacterById(activeTokenId);
@@ -11519,6 +11557,10 @@ function bindUiEvents() {
       void reloadTokenVisuals().catch((error) => {
         setStatus(error?.message ?? "Unable to reload token visuals.", "error");
       });
+      return;
+    }
+    if (action === "restore-part-wound") {
+      void recoverPartWound(actionNode.dataset.part, actionNode.dataset.wound).catch((error) => setStatus(error.message, "error"));
       return;
     }
     if (action === "heal-limbs") {

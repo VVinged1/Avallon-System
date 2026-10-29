@@ -1323,3 +1323,7 @@ select {
 .od-ability-resources{display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:0 0 auto;}
 .od-ability-resources .cp-pill{white-space:nowrap;margin:0;}
 .od-ability-resources>[data-ability-cost]{font-size:10px;white-space:nowrap;color:var(--muted);}
+
+.od-part-recovery{display:flex;gap:4px;justify-content:center;margin-top:4px;}
+.od-wound-button{display:inline-flex!important;gap:3px;align-items:center;justify-content:center;min-width:34px!important;height:23px!important;padding:2px 4px!important;font-size:10px!important;border-radius:5px!important;white-space:nowrap;}
+.od-wound-button small{font-size:9px;opacity:.8;}.od-wound-button:disabled{opacity:.35;cursor:default;}

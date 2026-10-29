@@ -12,7 +12,7 @@ import {rangeAdjustment,rangeAdjustmentLabel} from './rangeRules.js';
 import {createTargetDistance} from './targetDistance.js';
 import {arrangeCombatPanels} from './ui/combatLayout.js';
 import {installCompactButtons} from './ui/compactButtons.js';
-import {ARMOR_TRAINING,useItemOnTracker,absorbEquipmentCritical,setCombinedPartHp,setCombinedPartMax,reconcileEquipment} from './characterRules.js';
+import {ARMOR_TRAINING,partWounds,restorePartWound,useItemOnTracker,absorbEquipmentCritical,setCombinedPartHp,setCombinedPartMax,reconcileEquipment} from './characterRules.js';
 import { compactHud } from "./ui/compactHud.js";
 import { attributeCards, skillCards, effectChips } from "./ui/characterView.js";
 import { installCharacterTools,formDialog } from "./ui/characterTools.js";
@@ -3418,9 +3418,10 @@ function renderSelectedToken() {
                       const part = data.body[partName];
                       const fixedPart = partName === "Torso" || partName === SPECIAL_PART_NAME;
                       const penaltyDisabled = part.slot !== "other" ? "disabled" : bodyFieldDisabled;
+                      const wounds=partWounds(data,partName);const woundButtons=['serious','critical'].map(kind=>'<button type="button" class="od-wound-button" data-action="restore-part-wound" data-part="'+escapeHtml(partName)+'" data-wound="'+kind+'" title="'+(kind==='serious'?'Heal 1 serious wound':'Heal 1 body critical · armor is repaired separately')+'" aria-label="Heal '+kind+' wound on '+escapeHtml(getBodyPartLabel(data,partName))+'" '+(bodyFieldDisabled||!wounds[kind]?'disabled':'')+'><span>'+(kind==='serious'?'S−':'C+')+'</span><small>'+wounds[kind]+'</small></button>').join('');
                       return `<tr>
                         <td><div class="body-part-name-line">${fixedPart ? `<span class="body-part-eye-spacer" title="Always visible"></span>` : `<label class="check-label body-part-visible" title="Visible to players"><input type="checkbox" data-action="toggle-part-hidden" data-part="${escapeHtml(partName)}" ${part.hidden ? "" : "checked"} ${bodyFieldDisabled}><span></span></label>`}<input class="body-part-name-input" type="text" maxlength="40" value="${escapeHtml(getBodyPartLabel(data, partName))}" data-action="rename-body-part" data-part="${escapeHtml(partName)}" ${fixedPart ? "disabled" : bodyFieldDisabled}>${fixedPart ? "" : `<button type="button" class="body-part-remove" data-action="remove-body-part" data-part="${escapeHtml(partName)}" title="Remove body part" aria-label="Remove ${escapeHtml(partName)}" ${bodyFieldDisabled}>×</button>`}</div></td>
-                        <td><div class="inline-stepper"><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="-1" ${bodyFieldDisabled}>-</button><input type="text" inputmode="numeric" maxlength="3" value="${part.current}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="current" ${bodyFieldDisabled}><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="1" ${bodyFieldDisabled}>+</button></div></td>
+                        <td><div class="inline-stepper"><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="-1" ${bodyFieldDisabled}>-</button><input type="text" inputmode="numeric" maxlength="3" value="${part.current}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="current" ${bodyFieldDisabled}><button type="button" data-action="change-part" data-part="${escapeHtml(partName)}" data-field="current" data-delta="1" ${bodyFieldDisabled}>+</button></div><div class="od-part-recovery">${woundButtons}</div></td>
                         <td><input class="compact-input" type="text" inputmode="numeric" maxlength="3" value="${part.max}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="max" ${bodyFieldDisabled}></td>
                         <td><input class="compact-input" type="text" inputmode="numeric" maxlength="3" value="${part.armor}" data-action="set-field" data-part="${escapeHtml(partName)}" data-field="armor" ${bodyFieldDisabled}></td>
                         <td>${partName === "Torso" ? "Main" : partName === SPECIAL_PART_NAME ? "Special" : `<select data-action="set-field" data-part="${escapeHtml(partName)}" data-field="slot" ${bodyFieldDisabled}>${BODY_PART_SLOTS.map((slot) => `<option value="${slot}" ${part.slot === slot ? "selected" : ""}>${BODY_PART_SLOT_LABELS[slot]}</option>`).join("")}</select>`}</td>
@@ -3615,6 +3616,13 @@ async function reloadTokenVisuals() {
   setStatus(`${getCharacterName(token)} visuals reloaded.`, "success");
 }
 
+const woundRecoveries=new Set();
+async function recoverPartWound(partName,kind){
+ const token=getCharacterById(activeTokenId);if(!token||!canEditTokenData(token))throw Error('You cannot heal this character.');
+ const key=token.id+':'+partName+':'+kind;if(woundRecoveries.has(key))return;woundRecoveries.add(key);
+ try{await updateTrackerData(token.id,current=>{if(!canEditTokenData(getCharacterById(token.id)))throw Error('Character unavailable.');const next=structuredClone(current);restorePartWound(next,partName,kind);return next;});await ensureOverlayForToken(token.id);setStatus(getBodyPartLabel(getTrackerData(getCharacterById(token.id)),partName)+' · '+(kind==='serious'?'serious wound healed':'body critical healed'),'success');}
+ finally{woundRecoveries.delete(key);}
+}
 async function healLimbs() {
   const token = getCharacterById(activeTokenId);
   if (!token) {
@@ -5087,6 +5095,7 @@ function bindUiEvents() {
       return;
     }
 
+    if(action==='restore-part-wound'){void recoverPartWound(actionNode.dataset.part,actionNode.dataset.wound).catch(error=>setStatus(error.message,'error'));return;}
     if (action === "heal-limbs") {
       void healLimbs().catch((error) => {
         setStatus(error?.message ?? "Unable to heal limbs.", "error");

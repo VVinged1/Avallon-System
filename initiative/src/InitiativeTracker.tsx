@@ -298,33 +298,14 @@ export function InitiativeTracker() {
     setStatus("Rolled initiative for all tracked tokens using d20 + Reaction.");
   }
 
-  const listRef = useRef<HTMLUListElement>(null);
-  useEffect(() => {
-    if (listRef.current && typeof ResizeObserver !== "undefined") {
-      const resizeObserver = new ResizeObserver((entries) => {
-        if (entries.length > 0) {
-          const entry = entries[0];
-          // Get the height of the border box
-          // In the future you can use `entry.borderBoxSize`
-          // however as of this time the property isn't widely supported (iOS)
-          const borderHeight = entry.contentRect.bottom + entry.contentRect.top;
-          // Set a minimum height of 64px
-          const listHeight = Math.max(borderHeight, 64);
-          // Set the action height to the list height + the card header height + the divider
-          OBR.action.setHeight(listHeight + 92);
-        }
-      });
-      resizeObserver.observe(listRef.current);
-      return () => {
-        resizeObserver.disconnect();
-        // Reset height when unmounted
-        OBR.action.setHeight(129);
-      };
-    }
-  }, []);
+  const listRef=useRef<HTMLUListElement>(null);
+  const activeId=initiativeItems.find(item=>item.active)?.id;
+  const activePosition=sortedInitiativeItems.findIndex(item=>item.id===activeId);
+  useEffect(()=>{void OBR.viewport.getWidth().then(width=>OBR.action.setWidth(Math.min(760,Math.max(320,width-32)))).catch(()=>{});void OBR.action.setHeight(180);},[]);
+  useEffect(()=>{listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});},[activeId,activePosition,role]);
 
   return (
-    <Stack height="100vh">
+    <Stack height="100vh" sx={{overflow:"hidden",minWidth:0}}>
       <InitiativeHeader
         subtitle={
           initiativeItems.length === 0
@@ -336,6 +317,7 @@ export function InitiativeTracker() {
             <Tooltip title={role === "GM" ? "Add Selected Tokens" : "GM only"}>
               <span>
                 <IconButton
+                  size="small"
                   aria-label="add-selected"
                   onClick={handleAddSelectedClick}
                   disabled={role !== "GM"}
@@ -347,6 +329,7 @@ export function InitiativeTracker() {
             <Tooltip title={role === "GM" ? "Roll Initiative (d20 + Reaction)" : "GM only"}>
               <span>
                 <IconButton
+                  size="small"
                   aria-label="roll-initiative"
                   onClick={handleRollInitiativeClick}
                   disabled={role !== "GM" || initiativeItems.length === 0}
@@ -358,6 +341,7 @@ export function InitiativeTracker() {
             <Tooltip title={role === "GM" ? "Next Token" : "GM only"}>
               <span>
                 <IconButton
+                  size="small"
                   aria-label="next"
                   onClick={handleNextClick}
                   disabled={role !== "GM" || initiativeItems.length === 0}
@@ -369,8 +353,8 @@ export function InitiativeTracker() {
           </Stack>
         }
       />
-      <Box sx={{ overflowY: "auto" }}>
-        <List ref={listRef}>
+      <Box sx={{minHeight:0,overflow:"hidden"}}>
+        <List ref={listRef} onWheel={event=>{if(Math.abs(event.deltaY)>Math.abs(event.deltaX))event.currentTarget.scrollLeft+=event.deltaY;}} className="initiative-strip" aria-label="Initiative order" sx={{display:"flex",flexWrap:"nowrap",gap:1,p:1,overflowX:"auto",overflowY:"hidden",minHeight:88}}>
           {sortedInitiativeItems.map((initiative) => (
               <InitiativeListItem
                 key={initiative.id}

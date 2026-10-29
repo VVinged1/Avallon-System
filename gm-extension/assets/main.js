@@ -583,7 +583,7 @@ function installCompactButtons() {
   installTooltips();
   const enhance = () => {
     for (const button of document.querySelectorAll("button")) {
-      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action") || button.querySelector("[data-compact-icon]")) continue;
+      if (button.matches(".cp-attr,.cp-skill-card,.list-item,.od-wide-action,.od-wound-button") || button.querySelector("[data-compact-icon]")) continue;
       const text3 = button.textContent.trim();
       if (!text3 || text3.length <= 2) continue;
       button.title = text3;

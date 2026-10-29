@@ -15,12 +15,13 @@ export function InitiativeHeader({
     <>
       <CardHeader
         title="Avallon Initiative"
+        sx={{p:1,py:.5,flexShrink:0}}
         action={action}
         titleTypographyProps={{
           sx: {
-            fontSize: "1.125rem",
+            fontSize: "1rem",
             fontWeight: "bold",
-            lineHeight: "32px",
+            lineHeight: "28px",
             color: "text.primary",
           },
         }}
@@ -29,9 +30,11 @@ export function InitiativeHeader({
       {subtitle && (
         <Typography
           variant="caption"
+          title={subtitle}
           sx={{
             px: 2,
-            py: 1,
+            py: .5,
+            fontSize:11,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
             display: "inline-block",
             color: "text.secondary",
           }}

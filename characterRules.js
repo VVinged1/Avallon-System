@@ -118,6 +118,19 @@ export function armorHealth(tracker,partName) {
   const gear=tracker.avallon.inventory.items.filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart===partName&&i.quantity>0);
   return {max:gear.reduce((sum,i)=>sum+i.criticalMax,0),remaining:gear.reduce((sum,i)=>sum+i.criticalMax-i.criticalDamage,0)};
 }
+export function partWounds(tracker,partName){
+  const part=tracker.body?.[partName];if(!part)return {serious:0,critical:0};
+  const pool=armorHealth(tracker,partName),bodyMax=Math.max(0,part.max-pool.max),bodyCurrent=Math.max(0,part.current-pool.remaining);
+  return {serious:Math.max(0,part.serious||0),critical:Math.max(0,bodyMax-bodyCurrent)};
+}
+export function restorePartWound(tracker,partName,kind){
+  const part=tracker.body?.[partName];if(!part)throw Error('Body part no longer exists.');
+  if(!['serious','critical'].includes(kind))throw Error('Unknown wound type.');
+  const wounds=partWounds(tracker,partName);if(!wounds[kind])return false;
+  if(kind==='serious')part.serious=Math.max(0,part.serious-1);
+  else part.current=Math.min(part.max,part.current+1);
+  return true;
+}
 // Manual HP edits and external HP deltas use the same combined pool as attacks.
 export function setCombinedPartMax(tracker,partName,value) {
   const part=tracker.body[partName];if(!part)return;
