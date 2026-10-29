@@ -32,6 +32,14 @@ export function normalizeLibrary(raw, sanitize) {
   return {format:LIBRARY_FORMAT, version:1, templates};
 }
 export function emptyLibrary() { return {format:LIBRARY_FORMAT,version:1,templates:[]}; }
+export function singleTemplateLibrary(template,sanitize){
+  return normalizeLibrary({...emptyLibrary(),templates:[template]},sanitize);
+}
+export function readSingleTemplate(raw,sanitize){
+  const incoming=raw?.format===TEMPLATE_FORMAT?singleTemplateLibrary(raw,sanitize):normalizeLibrary(raw,sanitize);
+  if(incoming.templates.length!==1)throw new Error('Choose JSON containing exactly one character template.');
+  return incoming.templates[0];
+}
 export function mergeLibraries(local, imported) {
   const entries = new Map(local.templates.map(t => [t.id,t]));
   for (const template of imported.templates) entries.set(template.id,template);

@@ -1085,7 +1085,7 @@ function inventoryView(tracker, gm) {
 }
 function templatesView(library, gm) {
   if (!gm) return "";
-  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
+  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="secondary" data-od-action="export-template" data-id="${esc(t.id)}">Export this character JSON</button><button type="button" class="secondary" data-od-action="import-template" data-id="${esc(t.id)}">Import into this template</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
 }
 function prosthesisAbilityRows(o) {
   const rows2 = activeImplantAbilities(o), mana = manaStatus(o);
@@ -5843,6 +5843,14 @@ function normalizeLibrary(raw, sanitize) {
 function emptyLibrary() {
   return { format: LIBRARY_FORMAT, version: 1, templates: [] };
 }
+function singleTemplateLibrary(template, sanitize) {
+  return normalizeLibrary({ ...emptyLibrary(), templates: [template] }, sanitize);
+}
+function readSingleTemplate(raw, sanitize) {
+  const incoming = raw?.format === TEMPLATE_FORMAT ? singleTemplateLibrary(raw, sanitize) : normalizeLibrary(raw, sanitize);
+  if (incoming.templates.length !== 1) throw new Error("Choose JSON containing exactly one character template.");
+  return incoming.templates[0];
+}
 function mergeLibraries(local, imported) {
   const entries = new Map(local.templates.map((t) => [t.id, t]));
   for (const template of imported.templates) entries.set(template.id, template);
@@ -6303,6 +6311,36 @@ function installCharacterTools(host) {
             saveLibrary(incoming);
           } else saveLibrary(mergeLibraries(library, incoming));
           status("Template library imported.", "success");
+        } catch (e) {
+          status(e.message, "error");
+        }
+      };
+      input.click();
+      return;
+    } else if (action === "export-template") {
+      const template = library.templates.find((t) => t.id === id);
+      if (!template) throw new Error("Template no longer exists.");
+      const filename = (template.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/^[. ]+|[. ]+$/g, "").slice(0, 80) || "character") + ".avallon.json";
+      download(filename, JSON.stringify(singleTemplateLibrary(template, sanitize), null, 2));
+      return;
+    } else if (action === "import-template") {
+      const template = library.templates.find((t) => t.id === id);
+      if (!template) throw new Error("Template no longer exists.");
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.onchange = async () => {
+        try {
+          const file = input.files?.[0];
+          if (!file) return;
+          if (file.size > 4 * 1024 * 1024) throw new Error("Template must be under 4 MB.");
+          const incoming = readSingleTemplate(JSON.parse(await file.text()), sanitize);
+          const yes = await formDialog("Import into " + template.name + "?", [], { danger: true, message: "Replace only this saved template with " + incoming.name + ". Other templates and characters on the map are unaffected." });
+          if (!yes) return;
+          check(tokenId, true);
+          if (!library.templates.some((t) => t.id === id)) throw new Error("Template no longer exists.");
+          saveLibrary({ ...library, templates: library.templates.map((t) => t.id === id ? { ...incoming, id, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : t) });
+          status("Character template imported.", "success");
         } catch (e) {
           status(e.message, "error");
         }

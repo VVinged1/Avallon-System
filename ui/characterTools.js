@@ -9,7 +9,7 @@ import {findInventoryEntry,saveInventoryEntry,deleteInventoryEntry} from '../inv
 import {reloadMagazine} from '../ammunition.js';
 import { buildText, buildSceneUpload } from '@owlbear-rodeo/sdk';
 import { newId, equipItem, unequipItem, consumeItem } from '../inventory.js';
-import { makeTemplate, instantiateTemplate, readLibrary, writeLibrary, emptyLibrary, mergeLibraries, normalizeLibrary, libraryFromScenes, LIBRARY_ITEM_KEY, LIBRARY_STORAGE_KEY } from '../profiles.js';
+import { makeTemplate, singleTemplateLibrary, readSingleTemplate, instantiateTemplate, readLibrary, writeLibrary, emptyLibrary, mergeLibraries, normalizeLibrary, libraryFromScenes, LIBRARY_ITEM_KEY, LIBRARY_STORAGE_KEY } from '../profiles.js';
 import { inventoryView, templatesView, esc } from './characterView.js';
 
 // A dialog lives outside the character panel so scene refreshes cannot destroy its draft.
@@ -177,6 +177,22 @@ export function installCharacterTools(host) {
     } else if(action==='import-library') {
       const input=document.createElement('input');input.type='file';input.accept='.json,application/json';
       input.onchange=async()=>{try {const file=input.files?.[0];if(!file)return;if(file.size>4*1024*1024)throw new Error('Library must be under 4 MB.');const incoming=normalizeLibrary(JSON.parse(await file.text()),sanitize);if(storageError){const yes=await formDialog('Replace unreadable library?',[],{danger:true,message:'Export your existing JSON first. This replaces the unreadable local copy.'});if(!yes)return;saveLibrary(incoming);}else saveLibrary(mergeLibraries(library,incoming));status('Template library imported.','success');}catch(e){status(e.message,'error');}};
+      input.click();return;
+    } else if(action==='export-template') {
+      const template=library.templates.find(t=>t.id===id);if(!template)throw new Error('Template no longer exists.');
+      const filename=(template.name.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,80)||'character')+'.avallon.json';
+      download(filename,JSON.stringify(singleTemplateLibrary(template,sanitize),null,2));return;
+    } else if(action==='import-template') {
+      const template=library.templates.find(t=>t.id===id);if(!template)throw new Error('Template no longer exists.');
+      const input=document.createElement('input');input.type='file';input.accept='.json,application/json';
+      input.onchange=async()=>{try{
+        const file=input.files?.[0];if(!file)return;if(file.size>4*1024*1024)throw new Error('Template must be under 4 MB.');
+        const incoming=readSingleTemplate(JSON.parse(await file.text()),sanitize);
+        const yes=await formDialog('Import into '+template.name+'?',[],{danger:true,message:'Replace only this saved template with '+incoming.name+'. Other templates and characters on the map are unaffected.'});if(!yes)return;
+        check(tokenId,true);if(!library.templates.some(t=>t.id===id))throw new Error('Template no longer exists.');
+        saveLibrary({...library,templates:library.templates.map(t=>t.id===id?{...incoming,id,updatedAt:new Date().toISOString()}:t)});
+        status('Character template imported.','success');
+      }catch(e){status(e.message,'error');}};
       input.click();return;
     } else if(action==='apply-template') {
       const template=library.templates.find(t=>t.id===id);if(!template)throw new Error('Template no longer exists.');

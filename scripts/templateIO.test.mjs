@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {rulesContext} from './rulesContext.mjs';
+import {makeTemplate,singleTemplateLibrary,readSingleTemplate,normalizeLibrary,emptyLibrary} from '../profiles.js';
+const {sanitize}=rulesContext();const template=makeTemplate('Captain Espada',sanitize({}));
+const exported=singleTemplateLibrary(template,sanitize);
+assert.equal(exported.templates.length,1);
+assert.equal(normalizeLibrary(JSON.parse(JSON.stringify(exported)),sanitize).templates[0].name,'Captain Espada');
+assert.deepEqual(readSingleTemplate(exported,sanitize),readSingleTemplate(template,sanitize));
+assert.throws(()=>readSingleTemplate(emptyLibrary(),sanitize),/exactly one/);
+assert.throws(()=>readSingleTemplate({...exported,templates:[template,{...template,id:'second'}]},sanitize),/exactly one/);
+assert.throws(()=>readSingleTemplate({format:'other'},sanitize),/Avallon/);
+console.log('Single character JSON passed: library compatibility, standalone input, empty/multiple/invalid template rejection.');
