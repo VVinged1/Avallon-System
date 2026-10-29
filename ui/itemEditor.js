@@ -1,3 +1,4 @@
+import {compactBonusEditor,readCompactBonuses,installBonusEditors} from './bonusEditor.js';
 import {SKILL_CATEGORIES,skillCap} from '../avallonConfig.js';
 import {WEAPON_CATEGORIES,RANGE_BANDS,normalizeRangeReduction} from '../rangeRules.js';
 import { esc } from './characterView.js';
@@ -5,7 +6,7 @@ import { ATTRIBUTES } from '../characterRules.js';
 export const ITEM_TYPES=[['consumable','Usable'],['resource','Resource'],['ammo','Ammunition'],['weapon','Weapon'],['armor','Armor'],['shield','Shield'],['prosthesis','Prosthesis'],['artifact','Artifact']];
 export function itemEditor({existing={},type='resource',skills=[],parts=[],ammunition=[]}) {
   const dialog=document.createElement('dialog');dialog.className='od-dialog od-item-editor';
-  const field=(name,label,value='',inputType='text',max=999)=>`<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType==='number'?`min="${['damage','accuracy','penetration','abilityAccuracy'].includes(name)||name.startsWith('abilityAttr:')||name==='abilityBonusValue'?-999:0}" max="${max}" step="${['abilityCost','effectAmount'].includes(name)?0.5:1}"`:'maxlength="120"'}></label>`;
+  const field=(name,label,value='',inputType='text',max=999)=>`<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType==='number'?`min="${['damage','accuracy','penetration','abilityAccuracy'].includes(name)||name.startsWith('abilityAttr:')||name==='abilityBonusValue'?-999:0}" max="${max}" step="${['abilityCost','effectAmount','chargeMax','charges','chargeCost'].includes(name)?0.5:1}"`:'maxlength="120"'}></label>`;
   const select=(name,label,options,value)=>`<label>${esc(label)}<select name="${name}">${options.map(([k,l])=>`<option value="${esc(k)}" ${k===value?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`;
   const checkbox=(name,label,checked)=>`<label class="od-check"><input name="${name}" type="checkbox" ${checked?'checked':''}>${esc(label)}</label>`;
   const values={...existing,kind:type,acceptsMagazines:false};
@@ -15,7 +16,7 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
   const ownSkill=name=>findSkill(skills,name);
   if(values.bonuses){
     values.bonuses=structuredClone(values.bonuses);const merged={},categories={};
-    for(const [key,value]of Object.entries(values.bonuses.skills||{})){const own=ownSkill(key),canonical=own?.[0]||key;merged[canonical]=(merged[canonical]||0)+value;const category=own?.[2]||values.bonuses.skillCategories?.[key];if(['combat','applied'].includes(category))categories[canonical]=category;}
+    for(const [key,value]of Object.entries(values.bonuses.skills||{})){const own=ownSkill(key),canonical=own?.[0]||key;merged[canonical]=(merged[canonical]||0)+value;const category=own?.[2]||values.bonuses.skillCategories?.[key];if(SKILL_CATEGORIES.some(([key])=>key===category))categories[canonical]=category;}
     values.bonuses.skills=merged;values.bonuses.skillCategories=categories;
   }
   for(const key of Object.keys(values.bonuses?.skills||{}))if(!skillChoices.some(([k])=>k===key))skillChoices.push([key,key]);
@@ -23,24 +24,15 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
   const form=dialog.querySelector('form'),host=dialog.querySelector('[data-type-fields]');
   const rangeEditor=(prefix,value={})=>'';
   const unusedRangeEditor=(prefix,value={})=>`<fieldset class="od-range-reduction"><legend>Range penalty reduction · per band</legend>${RANGE_BANDS.map(([key,label])=>field(prefix+key,label,value[key]||0,'number')).join('')}</fieldset>`;
-  function bonusEditor(bonuses={},allowSkills=true,allowRange=true) {
-    const assigned=Object.entries(bonuses.skills||{}),available=skillChoices.filter(([key])=>!assigned.some(([assignedKey])=>key===assignedKey));
-    const rows=assigned.map(([key,value])=>{
-      const own=ownSkill(key),label=own?.[1]||skillChoices.find(([k])=>k===key)?.[1]||key;
-      const category=own?(['combat','applied'].includes(own[2])?'<input type="hidden" name="skillCategory:'+esc(key)+'" value="'+esc(own[2])+'">':''):select('skillCategory:'+key,'Category',[['combat','Combat'],['applied','Applied']],bonuses.skillCategories?.[key]||'applied');
-      return '<div class="od-bonus-skill-row">'+field('skill:'+key,label+' · level bonus',value,'number')+category+'<button type="button" data-remove-bonus-skill="'+esc(key)+'" aria-label="Remove '+esc(label)+' bonus" title="Remove skill bonus">×</button></div>';
-    }).join('');
-    const picker='<div class="od-bonus-skill-picker">'+select('bonusSkillChoice','Skill',[['','Choose skill'],...available.map(([key,label])=>[key,label])],'')+field('bonusSkillValue','Level bonus',1,'number',10)+'<button type="button" data-add-existing-bonus-skill title="Add selected skill bonus">+ Skill bonus</button></div>';
-    return '<fieldset class="od-bonuses"><legend>Passive bonuses</legend>'+(allowRange?rangeEditor('bonusRange:',bonuses.rangeReduction):'')+ATTRIBUTES.map(k=>field('attr:'+k,k,bonuses.attributes?.[k]||0,'number')).join('')+(allowSkills?'<div class="od-bonus-skills">'+rows+picker+'<details class="od-new-bonus-skill"><summary>New skill</summary><div class="od-bonus-new-fields">'+field('newBonusSkillName','New skill name')+field('newBonusSkillValue','Level bonus',1,'number',10)+select('newBonusSkillCategory','Category',[['combat','Combat'],['applied','Applied']],'applied')+'<button type="button" data-add-bonus-skill title="Add new skill bonus">+ Skill bonus</button></div></details></div>':'')+'</fieldset>';
-  }
+  function bonusEditor(bonuses={},allowSkills=true){return compactBonusEditor(bonuses,skillChoices,{allowSkills});}
   const abilityDrafts=new Map((existing.abilities||[]).map(a=>[a.id,structuredClone(a)]));
-  function abilityBonusSkill(key='',value=0){return '<div class="cp-row od-ability-bonus-skill">'+field('abilityBonusSkill','Skill name',key)+field('abilityBonusValue','Level bonus',value,'number',10)+'<button type="button" data-remove-ability-bonus aria-label="Remove skill bonus">×</button></div>';}
-  function abilityRow(a={}) {const kind=a.kind||'skill';return '<fieldset class="od-ability-row" data-ability-id="'+esc(a.id||crypto.randomUUID())+'">'+field('abilityName','Ability',a.name||'')+field('abilityCost','Mana cost',a.cost||0,'number')+select('abilityKind','Ability type',[['skill','Granted skill'],['bonus','Activate bonuses'],['attack','Attack']],kind)+field('abilityLevel','Skill level',a.level||0,'number',10)+(kind==='skill'?'':kind==='attack'?field('abilityDamage','Damage',a.damage||0,'number')+field('abilityAccuracy','Accuracy',a.accuracy||0,'number'):ATTRIBUTES.map(k=>field('abilityAttr:'+k,k,a.bonuses?.attributes?.[k]||0,'number')).join('')+'<div data-ability-bonus-skills>'+Object.entries(a.bonuses?.skills||{}).map(([k,v])=>abilityBonusSkill(k,v)).join('')+'</div><button type="button" data-add-ability-bonus>Add skill bonus</button>')+field('abilityDescription','Description',a.description||'')+'<button type="button" data-remove-ability aria-label="Remove ability">×</button></fieldset>';}
+  function abilityRow(a={}) {
+    const kind=a.kind||(a.id?'skill':'utility'),currency=values.kind==='artifact'?'Charge cost':'Mana cost';
+    return '<fieldset class="od-ability-row" data-ability-id="'+esc(a.id||crypto.randomUUID())+'"><legend>Ability</legend><div class="od-ability-heading">'+field('abilityName','Name',a.name||'')+select('abilityKind','Type',[['utility','Use property'],['bonus','Activate bonuses'],['attack','Attack'],['skill','Granted skill']],kind)+'</div><div class="od-ability-numbers">'+field('abilityLevel','Skill level',a.level||0,'number',10)+(kind==='skill'?'':field('abilityCost',currency,a.cost||0,'number'))+(kind==='attack'?field('abilityDamage','Damage',a.damage||0,'number')+field('abilityAccuracy','Accuracy',a.accuracy||0,'number'):'')+'</div>'+(kind==='bonus'?compactBonusEditor(a.bonuses,skillChoices,{prefix:'ability',label:'Bonuses when activated'}):'')+'<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">'+esc(a.description||'')+'</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">×</button></fieldset>';
+  }
   function readAbilityRow(row){
     const previous=abilityDrafts.get(row.dataset.abilityId)||{},get=(name,fallback='')=>row.querySelector('[name="'+name+'"]')?.value??fallback;
-    const bonuses=structuredClone(previous.bonuses||{attributes:{},skills:{}});
-    if(row.querySelector('[name^="abilityAttr:"]')){bonuses.attributes={};for(const input of row.querySelectorAll('[name^="abilityAttr:"]'))if(Number(input.value))bonuses.attributes[input.name.slice(12)]=Number(input.value);}
-    if(row.querySelector('[data-ability-bonus-skills]')){bonuses.skills={};for(const r of row.querySelectorAll('.od-ability-bonus-skill')){const name=r.querySelector('[name="abilityBonusSkill"]').value.trim(),v=Number(r.querySelector('[name="abilityBonusValue"]').value)||0;if(name&&v)bonuses.skills[name]=(bonuses.skills[name]||0)+v;}}
+    const bonusRoot=row.querySelector('[data-bonus-editor="ability"]'),bonuses=bonusRoot?readCompactBonuses(bonusRoot):structuredClone(previous.bonuses||{attributes:{},skills:{}});
     const ability={id:row.dataset.abilityId,name:get('abilityName'),kind:get('abilityKind'),cost:Number(get('abilityCost',previous.cost))||0,level:Number(get('abilityLevel',previous.level))||0,description:get('abilityDescription'),damage:Number(get('abilityDamage',previous.damage))||0,accuracy:Number(get('abilityAccuracy',previous.accuracy))||0,bonuses};abilityDrafts.set(ability.id,ability);return ability;
   }
   function collect() {
@@ -49,13 +41,8 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
     if(form.elements.acceptsMagazines)values.acceptsMagazines=form.elements.acceptsMagazines.checked;
     if(form.querySelector('[data-equipment-slots]'))values.slots=[...form.querySelectorAll('[name="equipmentSlot"]:checked')].map(e=>e.value);
     values.playerRemovable=!!form.elements.playerRemovable?.checked;
-    if(values.kind==='artifact'&&form.querySelector('[name^="activeAttr:"]')){values.activeBonuses={attributes:{},skills:{}};for(const input of form.querySelectorAll('[name^="activeAttr:"],[name^="activeSkill:"]')){const [type,...key]=input.name.split(':');if(Number(input.value))values.activeBonuses[type==='activeAttr'?'attributes':'skills'][key.join(':')]=Number(input.value);}}
-    const bonuses={attributes:{},skills:{},skillCategories:{}};
-    for(const input of form.querySelectorAll('[name^="attr:"],[name^="skill:"]')) {
-      const [kind,...key]=input.name.split(':');const value=Number(input.value)||0;if(value)bonuses[kind==='attr'?'attributes':'skills'][key.join(':')]=value;
-    }
-    for(const input of form.querySelectorAll('[name^="skillCategory:"]'))bonuses.skillCategories[input.name.slice(14)]=input.value;
-    if(form.querySelector('.od-bonuses')){bonuses.rangeReduction=normalizeRangeReduction(Object.fromEntries(RANGE_BANDS.map(([key])=>[key,data['bonusRange:'+key]])));values.bonuses=bonuses;}
+    const passive=form.querySelector('[data-bonus-editor=""]'),active=form.querySelector('[data-bonus-editor="active"]');
+    if(passive)values.bonuses=readCompactBonuses(passive);if(active)values.activeBonuses=readCompactBonuses(active);
     if(form.elements['weaponRange:clinch'])values.rangeReduction=normalizeRangeReduction(Object.fromEntries(RANGE_BANDS.map(([key])=>[key,data['weaponRange:'+key]])));
     if(form.querySelector('[data-abilities]'))values.abilities=[...form.querySelectorAll('.od-ability-row')].map(readAbilityRow).filter(a=>a.name.trim());
     values.ammoIds=[...form.querySelectorAll('[name="ammoCompatible"]:checked')].map(e=>e.value);
@@ -72,10 +59,10 @@ export function itemEditor({existing={},type='resource',skills=[],parts=[],ammun
     }
     if(kind==='resource')html+=bonusEditor(values.bonuses,true,false);
     if(kind==='artifact'){
-      html+=field('chargeMax','Maximum charges',values.chargeMax??5,'number')+field('charges','Current charges · GM correction',values.charges??values.chargeMax??5,'number')+field('chargeCost','Charges per use',values.chargeCost??1,'number')+select('artifactEffect','Active effect',[['property','Passive property only'],['mana','Restore mana'],['heal','Heal body HP'],['bonus','Activate bonuses']],values.artifactEffect||'property');
+      html+=field('chargeMax','Maximum charges',values.chargeMax??5,'number')+field('charges','Current charges · GM correction',values.charges??values.chargeMax??5,'number')+field('chargeCost','Default action · charge cost',values.chargeCost??1,'number')+select('artifactEffect','Default action',[['property','No default action / passive property'],['mana','Restore mana'],['heal','Heal body HP'],['bonus','Activate bonuses']],values.artifactEffect||'property');
       if(['mana','heal'].includes(values.artifactEffect))html+=field('effectAmount',values.artifactEffect==='mana'?'Mana restored':'Critical wounds restored',values.effectAmount??1,'number');
       html+=bonusEditor(values.bonuses,true,false);
-      if(values.artifactEffect==='bonus')html+='<fieldset class="od-bonuses"><legend>Active bonuses · spend charges</legend>'+ATTRIBUTES.map(k=>field('activeAttr:'+k,k,values.activeBonuses?.attributes?.[k]||0,'number')).join('')+skillChoices.map(([k,label])=>field('activeSkill:'+k,label+' · level bonus',values.activeBonuses?.skills?.[k]||0,'number')).join('')+'</fieldset>';
+      if(values.artifactEffect==='bonus')html+=compactBonusEditor(values.activeBonuses,skillChoices,{prefix:'active',label:'Active bonuses · spend charges'});
       html+='<p class="cp-muted">Passive bonuses and properties work while equipped. Active effects use this artifact’s charges. The GM restores charges manually. Healing affects body wounds, not armor.</p>';
     }
     if(kind==='ammo')html+=field('damage','Damage / round',values.damage??0,'number')+field('penetration','Armor penetration',values.penetration??0,'number');
@@ -90,8 +77,9 @@ html+=field('capacity','Internal capacity',values.capacity||6,'number')+field('l
     if(['armor','shield','prosthesis'].includes(kind)) {
       html+=field('armor','Armor',values.armor??0,'number')+field('criticalMax',kind==='prosthesis'?'Body part HP bonus':'Critical durability',values.criticalMax??1,'number')+(kind==='prosthesis'?'':field('criticalDamage','Critical damage taken',values.criticalDamage??0,'number'))+'<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots · choose allowed parts</legend>'+[['any','Any part'],...parts,...values.slots.filter(key=>key!=='any'&&!parts.some(([k])=>k===key)).map(key=>[key,key])].map(([key,label])=>checkbox('equipmentSlot',label,values.slots.includes(key)).replace('name="equipmentSlot"','name="equipmentSlot" value="'+esc(key)+'"')).join('')+'</fieldset>';
       if(kind==='prosthesis')html+='<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
-      if(kind==='prosthesis')html+=checkbox('playerRemovable','Player may equip / remove this prosthesis',values.playerRemovable)+bonusEditor(values.bonuses,true,false)+`<fieldset><legend>Granted abilities · available only while equipped</legend><div data-abilities>${(values.abilities||[]).map(abilityRow).join('')}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
+      if(kind==='prosthesis')html+=checkbox('playerRemovable','Player may equip / remove this prosthesis',values.playerRemovable)+bonusEditor(values.bonuses,true,false);
     }
+    if(['resource','artifact','prosthesis'].includes(kind))html+='<fieldset class="od-item-abilities"><legend>Item abilities</legend><p class="cp-muted">'+(kind==='resource'?'Available while carried · uses mana.':kind==='artifact'?'Available while equipped · uses artifact charges.':'Available while equipped · uses mana.')+'</p><div data-abilities>'+(values.abilities||[]).map(abilityRow).join('')+'</div><button type="button" data-add-ability title="Add ability">+ Ability</button></fieldset>';
     host.innerHTML=html;
     if(form.elements.weaponCategory&&!existing.id)form.elements.weaponCategory.required=true;
     // Bonus inputs accept signed modifiers.
@@ -105,16 +93,11 @@ html+=field('capacity','Internal capacity',values.capacity||6,'number')+field('l
     }
     if(['kind','subtype','weaponKind','acceptsMagazines','artifactEffect'].includes(e.target.name)){collect();render();}
   });
-  form.addEventListener('input',e=>{if(e.target.name==='newBonusSkillName')form.elements.newBonusSkillCategory.closest('label').hidden=!!ownSkill(e.target.value);});
+  installBonusEditors(dialog,skillChoices);
   form.addEventListener('click',e=>{
-    const remove=e.target.closest('[data-remove-bonus-skill]');if(remove){collect();delete values.bonuses.skills[remove.dataset.removeBonusSkill];delete values.bonuses.skillCategories?.[remove.dataset.removeBonusSkill];render();return;}
-    if(e.target.closest('[data-add-existing-bonus-skill]')){const key=form.elements.bonusSkillChoice.value,bonus=Number(form.elements.bonusSkillValue.value)||0;if(!key||!bonus)return;collect();values.bonuses.skills[key]=bonus;const own=ownSkill(key);if(own&&['combat','applied'].includes(own[2]))values.bonuses.skillCategories[key]=own[2];render();return;}
-    if(e.target.closest('[data-add-bonus-skill]')) {
-    const input=form.elements.newBonusSkillName,name=input.value.trim(),bonus=Number(form.elements.newBonusSkillValue.value)||0;
-    if(!name||name.length>40||['__proto__','constructor','prototype'].includes(name)){input.setCustomValidity('Enter a skill name (1–40 characters).');input.reportValidity();input.oninput=()=>input.setCustomValidity('');return;}
-    collect();let choice=findSkill(skillChoices,name);
-    if(!choice){choice=[name,name];skillChoices.push(choice);}values.bonuses.skills[choice[0]]=bonus;values.bonuses.skillCategories??={};const own=ownSkill(choice[0]);if(!own||['combat','applied'].includes(own[2]))values.bonuses.skillCategories[choice[0]]=own?own[2]:values.newBonusSkillCategory;render();return;
-  }if(e.target.closest('[data-add-ability-bonus]')){e.target.closest('.od-ability-row').querySelector('[data-ability-bonus-skills]').insertAdjacentHTML('beforeend',abilityBonusSkill());}e.target.closest('[data-remove-ability-bonus]')?.closest('.od-ability-bonus-skill').remove();if(e.target.closest('[data-add-ability]')){host.querySelector('[data-abilities]').insertAdjacentHTML('beforeend',abilityRow());}e.target.closest('[data-remove-ability]')?.closest('.od-ability-row').remove();});
+    if(e.target.closest('[data-add-ability]')){host.querySelector('[data-abilities]').insertAdjacentHTML('beforeend',abilityRow());}
+    e.target.closest('[data-remove-ability]')?.closest('.od-ability-row').remove();
+  });
   document.body.append(dialog);render();
   return new Promise(resolve=>{
     const finish=v=>{dialog.close();dialog.remove();resolve(v);};

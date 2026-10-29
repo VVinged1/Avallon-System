@@ -1,6 +1,6 @@
 import {normalizeBonuses,useItemOnTracker} from './characterRules.js';
 import {manaStatus,setMana} from './magicRules.js';
-const count=(v,max=999)=>Math.max(0,Math.min(max,Math.floor(Number(v)||0)));
+const count=(v,max=999)=>Math.max(0,Math.min(max,Math.round((Number(v)||0)*2)/2));
 export function normalizeArtifact(raw={}) {
  const chargeMax=count(raw.chargeMax);
  return {chargeMax,charges:count(raw.charges??chargeMax,chargeMax),chargeCost:count(raw.chargeCost??1),artifactEffect:['mana','heal','bonus','property'].includes(raw.artifactEffect)?raw.artifactEffect:'property',effectAmount:Math.round(Math.max(0,Math.min(999,Number(raw.effectAmount)||0))*2)/2,activeBonuses:normalizeBonuses(raw.activeBonuses)};

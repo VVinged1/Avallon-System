@@ -595,12 +595,15 @@ var n = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
 function normalizeBonuses(raw) {
   const clean = (rows2, attributes = false) => Object.fromEntries(Object.entries(rows2 || {}).filter(([k, v]) => k.length <= 80 && !["__proto__", "constructor", "prototype"].includes(k) && (!attributes || ATTRIBUTES.includes(k)) && n(v)).slice(0, 80).map(([k, v]) => [k, n(v)]));
   const rangeReduction = normalizeRangeReduction(raw?.rangeReduction);
-  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => ["combat", "applied"].includes(raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
+  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => SKILL_CATEGORIES.some(([category]) => category === raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
   return { attributes: clean(raw?.attributes, true), skills: clean(raw?.skills), ...Object.keys(skillCategories).length ? { skillCategories } : {}, ...Object.keys(rangeReduction).length ? { rangeReduction } : {} };
 }
 function normalizeEffects(raw) {
   const seen = /* @__PURE__ */ new Set();
   return (Array.isArray(raw) ? raw : []).slice(0, 100).filter((e) => e && typeof e.id === "string" && !seen.has(e.id) && seen.add(e.id)).map((e) => ({ id: e.id.slice(0, 120), name: String(e.name || "Effect").slice(0, 120), bonuses: normalizeBonuses(e.bonuses), ...e.sourceItemId ? { sourceItemId: String(e.sourceItemId).slice(0, 120) } : {} }));
+}
+function itemAbilityAvailable(item) {
+  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact"].includes(item.kind) && !!item.equippedPart);
 }
 function itemActive(item) {
   return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
@@ -644,7 +647,7 @@ function effectiveAvallon(base) {
   for (const i of o.inventory?.items || []) {
     if (!itemActive(i)) continue;
     if (i.kind === "resource" || ["armor", "shield", "prosthesis", "artifact"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "prosthesis"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "prosthesis" });
-    if (i.kind === "prosthesis" && i.equippedPart) for (const a of i.abilities || []) {
+    if (itemAbilityAvailable(i)) for (const a of i.abilities || []) {
       if (a.kind && a.kind !== "skill") continue;
       const key = register("implant:" + i.id + ":" + a.id, a.name, a.level, "abilities", i.name, true);
       if (!direct.has(key)) {
@@ -654,7 +657,7 @@ function effectiveAvallon(base) {
       }
     }
   }
-  rows2.push(...(base.effects || []).filter((e) => !e.sourceItemId || (o.inventory?.items || []).some((i) => i.id === e.sourceItemId && i.equippedPart && itemActive(i))).map((e) => ({ ...e, implant: !!e.sourceItemId })));
+  rows2.push(...(base.effects || []).filter((e) => !e.sourceItemId || (o.inventory?.items || []).some((i) => i.id === e.sourceItemId && itemAbilityAvailable(i) && itemActive(i))).map((e) => ({ ...e, implant: !!e.sourceItemId })));
   for (const row of [...rows2].sort((a, b) => Number(b.implant) - Number(a.implant))) for (const [key] of Object.entries(row.bonuses?.skills || {})) {
     const label = base.skillLabels[key] || key, k = canonical.get(nameKey(label)) || register(key, label, 0, row.bonuses?.skillCategories?.[key] || "applied", row.name);
     o.skillAliases[key] = k;
@@ -792,7 +795,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
     if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (item.kind !== "prosthesis") delete definition.abilities;
+    if (!["prosthesis", "resource", "artifact"].includes(item.kind)) delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -821,7 +824,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
 var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 // artifactRules.js
-var count = (v, max = 999) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
+var count = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
 function normalizeArtifact(raw = {}) {
   const chargeMax = count(raw.chargeMax);
   return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
@@ -855,7 +858,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),

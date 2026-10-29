@@ -1,4 +1,4 @@
-import {skillCap} from './avallonConfig.js';
+import {skillCap,SKILL_CATEGORIES} from './avallonConfig.js';
 import {normalizeRangeReduction,RANGE_BANDS} from './rangeRules.js';
 // Derived character values. Base attributes/skills are never overwritten by effects.
 export const ARMOR_TRAINING = {light_armor:'Light Armor',medium_armor:'Medium Armor',heavy_armor:'Heavy Armor'};
@@ -7,7 +7,7 @@ const n = v => Math.max(-999,Math.min(999,Math.trunc(Number(v)||0)));
 export function normalizeBonuses(raw) {
   const clean=(rows,attributes=false)=>Object.fromEntries(Object.entries(rows||{}).filter(([k,v])=>k.length<=80&&!['__proto__','constructor','prototype'].includes(k)&&(!attributes||ATTRIBUTES.includes(k))&&n(v)).slice(0,80).map(([k,v])=>[k,n(v)]));
   const rangeReduction=normalizeRangeReduction(raw?.rangeReduction);
-  const skillCategories=Object.fromEntries(Object.keys(clean(raw?.skills)).filter(k=>['combat','applied'].includes(raw?.skillCategories?.[k])).map(k=>[k,raw.skillCategories[k]]));
+  const skillCategories=Object.fromEntries(Object.keys(clean(raw?.skills)).filter(k=>SKILL_CATEGORIES.some(([category])=>category===raw?.skillCategories?.[k])).map(k=>[k,raw.skillCategories[k]]));
   return {attributes:clean(raw?.attributes,true),skills:clean(raw?.skills),...(Object.keys(skillCategories).length?{skillCategories}:{}),...(Object.keys(rangeReduction).length?{rangeReduction}:{})};
 }
 export function normalizeEffects(raw) {
@@ -17,6 +17,7 @@ export function equipmentFits(item,partName,part) {
   const slots=Array.isArray(item.slots)?item.slots:[item.slot||'any'];
   return slots.includes('any')||slots.includes(partName)||slots.includes(part?.slot);
 }
+export function itemAbilityAvailable(item){return item.quantity>0&&(['resource'].includes(item.kind)||(['prosthesis','artifact'].includes(item.kind)&&!!item.equippedPart));}
 export function itemActive(item) { return item.quantity>0 && (item.kind==='prosthesis' || !item.criticalMax || item.criticalDamage<item.criticalMax); }
 export function armorSummary(o) {
   const total=(o.inventory?.items||[]).filter(i=>['armor','shield'].includes(i.kind)&&i.equippedPart&&itemActive(i)).reduce((sum,i)=>sum+i.armor,0);
@@ -39,13 +40,13 @@ export function effectiveAvallon(base) {
   for(const i of o.inventory?.items||[]) {
     if(!itemActive(i))continue;
     if(i.kind==='resource'||(['armor','shield','prosthesis','artifact'].includes(i.kind)&&i.equippedPart))rows.push({id:i.id,name:i.name,bonuses:['resource','prosthesis'].includes(i.kind)?{...i.bonuses,rangeReduction:{}}:i.bonuses,passive:true,implant:i.kind==='prosthesis'});
-    if(i.kind==='prosthesis'&&i.equippedPart)for(const a of i.abilities||[]) {
+    if(itemAbilityAvailable(i))for(const a of i.abilities||[]) {
       if(a.kind&&a.kind!=='skill')continue;
       const key=register('implant:'+i.id+':'+a.id,a.name,a.level,'abilities',i.name,true);
       if(!direct.has(key)){o.skillDescriptions??={};o.skillDescriptions[key]??=a.description||'';o.skillPerks[key]??=[];}
     }
   }
-  rows.push(...(base.effects||[]).filter(e=>!e.sourceItemId||(o.inventory?.items||[]).some(i=>i.id===e.sourceItemId&&i.equippedPart&&itemActive(i))).map(e=>({...e,implant:!!e.sourceItemId})));
+  rows.push(...(base.effects||[]).filter(e=>!e.sourceItemId||(o.inventory?.items||[]).some(i=>i.id===e.sourceItemId&&itemAbilityAvailable(i)&&itemActive(i))).map(e=>({...e,implant:!!e.sourceItemId})));
   // Register implant skills before resources, independent of inventory order.
   for(const row of [...rows].sort((a,b)=>Number(b.implant)-Number(a.implant)))for(const [key]of Object.entries(row.bonuses?.skills||{})){
     const label=base.skillLabels[key]||key,k=canonical.get(nameKey(label))||register(key,label,0,row.bonuses?.skillCategories?.[key]||'applied',row.name);

@@ -2,7 +2,7 @@ import {SKILL_CATEGORIES,skillCap} from './avallonConfig.js';
 import {manaStatus,spendMana,abilityAttacks,activateAbility} from './magicRules.js';
 import {installArtifactTools} from './ui/artifactTools.js';
 import {installMagicTools} from './ui/magicTools.js';
-import {implantAttacks,activateImplantAbility} from './implantAbilities.js';
+import {implantAttacks,activateImplantAbility,checkItemAbilityCost,spendItemAbilityCost} from './implantAbilities.js';
 import {applyCheckedItemUse,itemUseSummary} from './itemUse.js';
 import {createFieldDrafts,createTokenWriteQueue} from './fieldDrafts.js';
 import {rangeAdjustment,rangeAdjustmentLabel} from './rangeRules.js';
@@ -4271,10 +4271,11 @@ async function performAttackOnce({ manualDefense = false } = {}) {
       ? getActionFieldValue('[data-manual-attack-field="weaponName"]') || getActionFieldValue('[data-attack-field="weaponName"]')
       : getActionFieldValue('[data-attack-field="weaponName"]');
   if(attackerAvallon.pilotMissing)throw Error('Vehicle driver is unavailable. Exit the vehicle or select another driver.');
-  if(weaponName?.startsWith('implant:')&&!implantAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Prosthesis attack is no longer equipped. Select a weapon.');
+  if(weaponName?.startsWith('implant:')&&!implantAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Item ability is no longer available. Select an attack.');
   if(weaponName?.startsWith('magic:')&&!abilityAttacks(attackerAvallon).some(w=>w.selectionKey===weaponName))throw Error('Ability is no longer available. Select an attack.');
   const selectedWeapon = getWeaponByName(attacker, weaponName);
-  if((selectedWeapon.magicAbilityId||selectedWeapon.implantId)&&manaStatus(getTrackerData(attacker).avallon).current<(selectedWeapon.cost||0))throw Error('Not enough mana.');
+  if(selectedWeapon.implantId)checkItemAbilityCost(getTrackerData(attacker),selectedWeapon.implantId,selectedWeapon.abilityId);
+  else if(selectedWeapon.magicAbilityId&&manaStatus(getTrackerData(attacker).avallon).current<(selectedWeapon.cost||0))throw Error('Not enough mana.');
   if(selectedWeapon.implantId||selectedWeapon.magicAbilityId)skillName=selectedWeapon.selectionKey;
   const attackSkillValue=(selectedWeapon.implantId||selectedWeapon.magicAbilityId)?selectedWeapon.level||0:attackerAvallon.skills[skillName]||0;
   const shotPrefix = manualDefense ? "data-manual-attack-field" : "data-attack-field";
@@ -4455,9 +4456,9 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   await updateTrackerData(attacker.id, (current) => {
     const next = structuredClone(current);
     if(attackerAvallon.pilot?.id&&next.avallon.vehicle?.pilotTokenId!==attackerAvallon.pilot.id)throw Error('Vehicle driver changed. Retry the attack.');
-    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.level!==selectedWeapon.level||ability.cost!==selectedWeapon.cost||ability.accuracy!==selectedWeapon.accuracy)throw Error('Prosthesis attack changed. Retry the attack.');}
+    if(selectedWeapon.implantId){const ability=implantAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.damage!==selectedWeapon.damage||ability.accuracy!==selectedWeapon.accuracy||ability.level!==selectedWeapon.level||ability.cost!==selectedWeapon.cost||ability.resourceType!==selectedWeapon.resourceType)throw Error('Item ability changed. Retry the attack.');}
     if(selectedWeapon.magicAbilityId){const ability=abilityAttacks(next.avallon).find(w=>w.id===selectedWeapon.id);if(!ability||ability.cost!==selectedWeapon.cost||ability.damage!==selectedWeapon.damage||ability.level!==selectedWeapon.level||ability.cost!==selectedWeapon.cost||ability.accuracy!==selectedWeapon.accuracy)throw Error('Ability changed. Retry.');spendMana(next.avallon,ability.cost);}
-    if(selectedWeapon.implantId)spendMana(next.avallon,selectedWeapon.cost||0);
+    if(selectedWeapon.implantId)spendItemAbilityCost(next,selectedWeapon.implantId,selectedWeapon.abilityId);
     if (shot) {
       if (next.avallon.weapons.ranged[selectedWeapon.rangedIndex]?.id !== selectedWeapon.id) throw new Error("Weapon changed. Please retry the attack.");
       consumeAmmo(next.avallon, selectedWeapon.rangedIndex, shot);
@@ -5476,7 +5477,7 @@ OBR.onReady(async () => {
       defaultHeight: 860,
     });
     characterTools = installCharacterTools({OBR, sanitize:sanitizeTrackerData, tracker:getTrackerData,
-      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:async(tokenId,itemId,abilityId)=>{await updateTrackerData(tokenId,current=>{const next=structuredClone(current);const ability=next.avallon.inventory.items.find(i=>i.id===itemId)?.abilities.find(a=>a.id===abilityId);activateImplantAbility(next,itemId,abilityId);spendMana(next.avallon,ability?.cost||0);return next;});await syncState();scheduleRender();}, setVehicle:setVehicleState, selectImplantAttack:(tokenId,key)=>{const token=getCharacterById(tokenId),weapon=getWeaponByName(token,key);syncAttackWeaponInputs(tokenId,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(tokenId,'skill',key);scheduleRender();}, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
+      getPoolTokens:async()=>(await OBR.scene.items.getItems()).filter(isCharacterToken),getTokens:()=>characterListCache,getEffective:getAvallonData,activateAbility:async(tokenId,itemId,abilityId)=>{await updateTrackerData(tokenId,current=>{const next=structuredClone(current);const used=activateImplantAbility(next,itemId,abilityId);next.lastRoll={eventId:0,actorName:playerName,summary:used.name+' · '+used.cost+' '+used.currency+' spent',outcome:'ability-use',timestamp:new Date().toISOString(),source:'avallon-extension'};next.history=[next.lastRoll,...(next.history||[])].slice(0,12);return next;});await syncState();scheduleRender();}, setVehicle:setVehicleState, selectImplantAttack:(tokenId,key)=>{const token=getCharacterById(tokenId),weapon=getWeaponByName(token,key);syncAttackWeaponInputs(tokenId,key,weapon.damage,weapon.accuracy);saveAttackDraftValue(tokenId,'skill',key);scheduleRender();}, useItem:useCharacterItem, getToken:id => getCharacterById(id ?? activeTokenId), getRole:() => playerRole,
       canControl:canUseToken, update:updateTrackerData, refreshOverlay:ensureOverlayForToken,
       render:scheduleRender, status:setStatus, download:downloadTextFile,
       resetDraft:id => { pendingFieldDrafts.clear(id);attackFormDrafts.delete(id); for (const [key,timer] of inputAutosaveTimers) { if (key.startsWith(id+"|")) {clearTimeout(timer);inputAutosaveTimers.delete(key);} } },

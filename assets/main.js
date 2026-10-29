@@ -429,7 +429,7 @@ var n = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
 function normalizeBonuses(raw) {
   const clean = (rows2, attributes = false) => Object.fromEntries(Object.entries(rows2 || {}).filter(([k, v]) => k.length <= 80 && !["__proto__", "constructor", "prototype"].includes(k) && (!attributes || ATTRIBUTES.includes(k)) && n(v)).slice(0, 80).map(([k, v]) => [k, n(v)]));
   const rangeReduction = normalizeRangeReduction(raw?.rangeReduction);
-  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => ["combat", "applied"].includes(raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
+  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => SKILL_CATEGORIES.some(([category]) => category === raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
   return { attributes: clean(raw?.attributes, true), skills: clean(raw?.skills), ...Object.keys(skillCategories).length ? { skillCategories } : {}, ...Object.keys(rangeReduction).length ? { rangeReduction } : {} };
 }
 function normalizeEffects(raw) {
@@ -439,6 +439,9 @@ function normalizeEffects(raw) {
 function equipmentFits(item, partName, part) {
   const slots = Array.isArray(item.slots) ? item.slots : [item.slot || "any"];
   return slots.includes("any") || slots.includes(partName) || slots.includes(part?.slot);
+}
+function itemAbilityAvailable(item) {
+  return item.quantity > 0 && (["resource"].includes(item.kind) || ["prosthesis", "artifact"].includes(item.kind) && !!item.equippedPart);
 }
 function itemActive(item) {
   return item.quantity > 0 && (item.kind === "prosthesis" || !item.criticalMax || item.criticalDamage < item.criticalMax);
@@ -482,7 +485,7 @@ function effectiveAvallon(base) {
   for (const i of o.inventory?.items || []) {
     if (!itemActive(i)) continue;
     if (i.kind === "resource" || ["armor", "shield", "prosthesis", "artifact"].includes(i.kind) && i.equippedPart) rows2.push({ id: i.id, name: i.name, bonuses: ["resource", "prosthesis"].includes(i.kind) ? { ...i.bonuses, rangeReduction: {} } : i.bonuses, passive: true, implant: i.kind === "prosthesis" });
-    if (i.kind === "prosthesis" && i.equippedPart) for (const a of i.abilities || []) {
+    if (itemAbilityAvailable(i)) for (const a of i.abilities || []) {
       if (a.kind && a.kind !== "skill") continue;
       const key = register("implant:" + i.id + ":" + a.id, a.name, a.level, "abilities", i.name, true);
       if (!direct.has(key)) {
@@ -492,7 +495,7 @@ function effectiveAvallon(base) {
       }
     }
   }
-  rows2.push(...(base.effects || []).filter((e) => !e.sourceItemId || (o.inventory?.items || []).some((i) => i.id === e.sourceItemId && i.equippedPart && itemActive(i))).map((e) => ({ ...e, implant: !!e.sourceItemId })));
+  rows2.push(...(base.effects || []).filter((e) => !e.sourceItemId || (o.inventory?.items || []).some((i) => i.id === e.sourceItemId && itemAbilityAvailable(i) && itemActive(i))).map((e) => ({ ...e, implant: !!e.sourceItemId })));
   for (const row of [...rows2].sort((a, b) => Number(b.implant) - Number(a.implant))) for (const [key] of Object.entries(row.bonuses?.skills || {})) {
     const label = base.skillLabels[key] || key, k = canonical.get(nameKey(label)) || register(key, label, 0, row.bonuses?.skillCategories?.[key] || "applied", row.name);
     o.skillAliases[key] = k;
@@ -764,7 +767,7 @@ function installDescriptions() {
 }
 
 // artifactRules.js
-var count = (v, max = 999) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
+var count = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
 function normalizeArtifact(raw = {}) {
   const chargeMax = count(raw.chargeMax);
   return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
@@ -812,7 +815,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
     if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (item.kind !== "prosthesis") delete definition.abilities;
+    if (!["prosthesis", "resource", "artifact"].includes(item.kind)) delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -868,7 +871,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),
@@ -971,6 +974,7 @@ function deleteInventoryEntry(tracker, type, id) {
   const item = o.inventory.items.find((i) => i.id === id);
   if (!item) throw new Error("Item no longer exists.");
   if (item.equippedPart) unequipItem(tracker, id, true);
+  o.effects = (o.effects || []).filter((e) => e.sourceItemId !== id);
   o.inventory.items = o.inventory.items.filter((i) => i.id !== id);
 }
 function saveInventoryEntry(tracker, origin, values, id) {
@@ -1536,21 +1540,37 @@ function installMagicTools(host) {
 
 // implantAbilities.js
 function activeImplantAbilities(o) {
-  return (o.inventory?.items || []).filter((i) => i.kind === "prosthesis" && i.equippedPart && i.quantity > 0).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
+  return (o.inventory?.items || []).filter(itemAbilityAvailable).flatMap((item) => (item.abilities || []).filter((a) => ["attack", "bonus", "utility"].includes(a.kind)).map((ability) => ({ item, ability, key: "implant:" + item.id + ":" + ability.id })));
 }
 function implantAttacks(o) {
-  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, level: ability.level || 0, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0 }));
+  return activeImplantAbilities(o).filter(({ ability }) => ability.kind === "attack").map(({ item, ability, key }) => ({ id: key, selectionKey: key, name: item.name + " \xB7 " + ability.name, damage: ability.damage, accuracy: ability.accuracy || 0, level: ability.level || 0, implantId: item.id, abilityId: ability.id, cost: ability.cost || 0, resourceType: item.kind === "artifact" ? "charges" : "mana" }));
+}
+function checkItemAbilityCost(tracker, itemId, abilityId) {
+  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId);
+  if (!row) throw Error("Item ability is unavailable. Carry the resource or equip the item.");
+  const cost = Math.max(0, Number(row.ability.cost) || 0), currency = row.item.kind === "artifact" ? "charges" : "mana", available = currency === "charges" ? row.item.charges : manaStatus(tracker.avallon).current;
+  if (available < cost) throw Error(currency === "charges" ? "Not enough artifact charges." : "Not enough mana.");
+  return { ...row, cost, currency };
+}
+function spendItemAbilityCost(tracker, itemId, abilityId) {
+  const row = checkItemAbilityCost(tracker, itemId, abilityId);
+  if (row.currency === "charges") row.item.charges = Math.round((row.item.charges - row.cost) * 2) / 2;
+  else spendMana(tracker.avallon, row.cost);
+  return row;
 }
 function activateImplantAbility(tracker, itemId, abilityId) {
   var _a;
-  const row = activeImplantAbilities(tracker.avallon).find((r) => r.item.id === itemId && r.ability.id === abilityId && r.ability.kind === "bonus");
-  if (!row) throw Error("Equipped prosthesis ability is unavailable.");
+  const row = checkItemAbilityCost(tracker, itemId, abilityId);
+  if (row.ability.kind === "attack") throw Error("Choose the ability in Attack.");
   const effect = { id: "implant-effect:" + itemId + ":" + abilityId, name: row.item.name + " \xB7 " + row.ability.name, sourceItemId: itemId, bonuses: normalizeBonuses(row.ability.bonuses) };
   (_a = tracker.avallon).effects ?? (_a.effects = []);
-  if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
-  if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
-  tracker.avallon.effects.push(effect);
-  return effect;
+  if (row.ability.kind === "bonus") {
+    if (tracker.avallon.effects.some((e) => e.id === effect.id)) throw Error("Ability is already active.");
+    if (tracker.avallon.effects.length >= 100) throw Error("Too many active effects.");
+  }
+  spendItemAbilityCost(tracker, itemId, abilityId);
+  if (row.ability.kind === "bonus") tracker.avallon.effects.push(effect);
+  return { ...effect, cost: row.cost, currency: row.currency };
 }
 
 // ui/characterView.js
@@ -1583,7 +1603,7 @@ function inventoryView(tracker, gm) {
     const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
     let controls = "";
     if (i.kind === "artifact") {
-      controls = (i.artifactEffect === "property" ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>" + (i.equippedPart && i.artifactEffect !== "property" ? '<button type="button" data-artifact-action="use" data-id="' + esc(i.id) + '" ' + (i.charges < i.chargeCost ? "disabled" : "") + ">Use \xB7 " + i.chargeCost + " charges</button>" : "");
+      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>" + (i.equippedPart && i.artifactEffect !== "property" ? '<button type="button" data-artifact-action="use" data-id="' + esc(i.id) + '" ' + (i.charges < i.chargeCost ? "disabled" : "") + ">Use \xB7 " + i.chargeCost + " charges</button>" : "");
     } else if (equipment) {
       const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
       if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
@@ -1614,7 +1634,12 @@ function templatesView(library, gm) {
   return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
 }
 function prosthesisAbilityRows(o) {
-  return activeImplantAbilities(o).map(({ item, ability, key }) => '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '">Prepare attack</button>' : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + ((o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id) ? "disabled" : "") + ">Activate bonuses</button>") + "</article>").join("");
+  const rows2 = activeImplantAbilities(o);
+  if (!rows2.length) return "";
+  return '<div class="cp-section-title">Item abilities</div>' + rows2.map(({ item, ability, key }) => {
+    const currency = item.kind === "artifact" ? "charges" : "mana", cost = ability.cost || 0, available = currency === "charges" ? item.charges : manaStatus(o).current, active = (o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id);
+    return '<article class="cp-card cp-row"><b>' + esc(ability.name) + '</b><span class="cp-muted">' + esc(item.name) + '</span><span class="cp-pill">' + (ability.level || 0) + "/10 \xB7 " + cost + " " + currency + "</span>" + descriptionButton(ability.name, ability.description) + (ability.kind === "attack" ? '<span class="cp-pill">DMG ' + ability.damage + '</span><button type="button" data-od-action="implant-attack" data-key="' + esc(key) + '" ' + (available < cost ? "disabled" : "") + ">Prepare attack</button>" : '<button type="button" data-od-action="activate-implant" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" ' + (available < cost || ability.kind === "bonus" && active ? "disabled" : "") + ">" + (ability.kind === "bonus" ? "Activate bonuses" : "Use ability") + "</button>") + "</article>";
+  }).join("");
 }
 
 // ui/itemPoolView.js
@@ -1635,7 +1660,7 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
     for (const details2 of list.querySelectorAll("details[data-pool-category]")) expanded.set(details2.dataset.poolCategory, details2.open);
     const row = (e) => {
       const b = e.blueprint, v = b.values;
-      return '<article class="cp-card cp-row"><b>' + esc(v.name) + '</b><span class="cp-pill">' + esc(v.kind) + '</span><span class="cp-muted">' + esc([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.kind === "artifact" && v.artifactEffect !== "property" ? "Charges " + v.chargeMax + " \xB7 cost " + v.chargeCost : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
+      return '<article class="cp-card cp-row"><b>' + esc(v.name) + '</b><span class="cp-pill">' + esc(v.kind) + '</span><span class="cp-muted">' + esc([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.kind === "artifact" && (v.artifactEffect !== "property" || (v.abilities || []).some((a) => a.kind && a.kind !== "skill")) ? "Charges " + v.chargeMax + " \xB7 cost " + v.chargeCost : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
     };
     const rows2 = (entries) => groupNamedItems(entries, (e) => ({ ...e.blueprint.values, kind: e.blueprint.type === "item" ? e.blueprint.values.kind : e.id })).map((group) => group.length === 1 ? row(group[0]) : '<details class="cp-card od-named-group"><summary>' + esc(group[0].blueprint.values.name) + " \xB7 " + group.length + " variants</summary>" + group.map(row).join("") + "</details>").join("");
     if (search) {
@@ -1708,12 +1733,89 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
   return { closed, refresh };
 }
 
+// ui/bonusEditor.js
+var esc2 = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var find = (skills, name) => skills.find(([key, label]) => [key, label].some((v) => String(v).trim().toLocaleLowerCase() === String(name).trim().toLocaleLowerCase()));
+var names = (prefix) => prefix === "ability" ? ["abilityAttr:", "abilitySkill:", "abilityCategory:"] : prefix === "active" ? ["activeAttr:", "activeSkill:", "activeCategory:"] : ["attr:", "skill:", "skillCategory:"];
+function compactBonusEditor(value = {}, skills = [], { prefix = "", label = "Passive bonuses", allowSkills = true } = {}) {
+  return '<fieldset class="od-bonuses od-compact-bonuses" data-bonus-editor="' + esc2(prefix) + '" data-allow-skills="' + allowSkills + '"><legend>' + esc2(label) + "</legend>" + contents(value, skills, prefix, allowSkills) + "</fieldset>";
+}
+function contents(value, skills, prefix, allowSkills) {
+  const [attrName, skillName, categoryName] = names(prefix), b = normalizeBonuses(value);
+  const rows2 = [...Object.entries(b.attributes).map(([key, v]) => ["attribute", key, v]), ...Object.entries(b.skills).map(([key, v]) => ["skill", key, v])];
+  const assigned = new Set(rows2.map(([type, key]) => (type === "attribute" ? "a:" : "s:") + key));
+  const options = (type, entries) => entries.filter(([k]) => !assigned.has(type + ":" + k)).map(([k, label]) => '<option value="' + esc2(type + ":" + k) + '">' + esc2(label) + "</option>").join("");
+  const categories = SKILL_CATEGORIES.map(([k, label]) => '<option value="' + k + '" ' + (k === "applied" ? "selected" : "") + ">" + esc2(label) + "</option>").join("");
+  return '<div class="od-bonus-assigned">' + rows2.map(([type, key, v]) => {
+    const own = type === "skill" ? find(skills, key) : null, label = own?.[1] || key, category = own?.[2] || b.skillCategories?.[key] || "applied";
+    return '<div class="od-compact-bonus-row" data-bonus-row data-type="' + type + '" data-key="' + esc2(key) + '"><span class="od-bonus-label"><b>' + esc2(label) + "</b><small>" + esc2(type === "attribute" ? "Characteristic" : SKILL_CATEGORIES.find(([k]) => k === category)?.[1] || "Skill") + '</small></span><input type="number" name="' + esc2((type === "attribute" ? attrName : skillName) + key) + '" value="' + v + '" min="-999" max="999" step="1" aria-label="' + esc2(label) + ' bonus">' + (type === "skill" ? '<input type="hidden" name="' + esc2(categoryName + key) + '" value="' + esc2(category) + '">' : "") + '<button type="button" data-bonus-remove title="Remove bonus" aria-label="Remove ' + esc2(label) + ' bonus">\xD7</button></div>';
+  }).join("") + '</div><div class="od-compact-bonus-picker"><label>Characteristic' + (allowSkills ? " / skill" : "") + '<select data-bonus-choice><option value="">Choose bonus</option><optgroup label="Characteristics">' + options("a", ATTRIBUTES.map((k) => [k, k])) + "</optgroup>" + (allowSkills ? '<optgroup label="Skills">' + options("s", skills) + "</optgroup>" : "") + '</select></label><label>Bonus<input data-bonus-value type="number" value="1" min="-999" max="999" step="1"></label><button type="button" data-bonus-add title="Add selected bonus" aria-label="Add selected bonus">+</button></div>' + (allowSkills ? '<details class="od-new-bonus-skill"><summary>New skill</summary><div class="od-bonus-new-fields"><label>New skill name<input data-new-bonus-name maxlength="40"></label><label>Bonus<input data-new-bonus-value type="number" value="1" min="-999" max="999" step="1"></label><label data-new-bonus-category>Category<select>' + categories + '</select></label><button type="button" data-bonus-new title="Add new skill bonus" aria-label="Add new skill bonus">+</button></div></details>' : "");
+}
+function readCompactBonuses(root) {
+  const value = { attributes: {}, skills: {}, skillCategories: {} };
+  for (const row of root?.querySelectorAll("[data-bonus-row]") || []) {
+    const key = row.dataset.key, n2 = Number(row.querySelector('[type="number"]').value) || 0;
+    if (n2) value[row.dataset.type === "attribute" ? "attributes" : "skills"][key] = n2;
+    const category = row.querySelector('[type="hidden"]')?.value;
+    if (category) value.skillCategories[key] = category;
+  }
+  return normalizeBonuses(value);
+}
+function installBonusEditors(dialog, skills) {
+  dialog.addEventListener("input", (e) => {
+    const root = e.target.closest("[data-bonus-editor]");
+    if (!root || !e.target.matches("[data-new-bonus-name]")) return;
+    root.querySelector("[data-new-bonus-category]").hidden = !!find(skills, e.target.value);
+  });
+  dialog.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-bonus-add],[data-bonus-new],[data-bonus-remove]"), root = button?.closest("[data-bonus-editor]");
+    if (!root) return;
+    e.preventDefault();
+    const b = readCompactBonuses(root);
+    let key, type, n2;
+    if (button.hasAttribute("data-bonus-remove")) {
+      const row = button.closest("[data-bonus-row]");
+      delete b[row.dataset.type === "attribute" ? "attributes" : "skills"][row.dataset.key];
+      delete b.skillCategories?.[row.dataset.key];
+    } else if (button.hasAttribute("data-bonus-add")) {
+      const value = root.querySelector("[data-bonus-choice]").value;
+      if (!value) return;
+      type = value[0];
+      key = value.slice(2);
+      n2 = Number(root.querySelector("[data-bonus-value]").value) || 0;
+      if (!n2) return;
+      b[type === "a" ? "attributes" : "skills"][key] = n2;
+      if (type === "s") {
+        b.skillCategories ?? (b.skillCategories = {});
+        b.skillCategories[key] = find(skills, key)?.[2] || "applied";
+      }
+    } else {
+      const input = root.querySelector("[data-new-bonus-name]"), name = input.value.trim();
+      if (!name || ["__proto__", "constructor", "prototype"].includes(name)) {
+        input.setCustomValidity("Enter a skill name (1\u201340 characters).");
+        input.reportValidity();
+        input.oninput = () => input.setCustomValidity("");
+        return;
+      }
+      const own = find(skills, name);
+      key = own?.[0] || name;
+      n2 = Number(root.querySelector("[data-new-bonus-value]").value) || 0;
+      if (!n2) return;
+      b.skills[key] = n2;
+      b.skillCategories ?? (b.skillCategories = {});
+      b.skillCategories[key] = own?.[2] || root.querySelector("[data-new-bonus-category] select").value;
+    }
+    const prefix = root.dataset.bonusEditor, legend = root.querySelector("legend").outerHTML;
+    root.innerHTML = legend + contents(b, skills, prefix, root.dataset.allowSkills === "true");
+  });
+}
+
 // ui/itemEditor.js
 var ITEM_TYPES = [["consumable", "Usable"], ["resource", "Resource"], ["ammo", "Ammunition"], ["weapon", "Weapon"], ["armor", "Armor"], ["shield", "Shield"], ["prosthesis", "Prosthesis"], ["artifact", "Artifact"]];
 function itemEditor({ existing = {}, type = "resource", skills = [], parts = [], ammunition = [] }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
-  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "effectAmount"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
+  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "effectAmount", "chargeMax", "charges", "chargeCost"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
   const select = (name, label, options, value) => `<label>${esc(label)}<select name="${name}">${options.map(([k, l]) => `<option value="${esc(k)}" ${k === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
   const checkbox = (name, label, checked) => `<label class="od-check"><input name="${name}" type="checkbox" ${checked ? "checked" : ""}>${esc(label)}</label>`;
   const values = { ...existing, kind: type, acceptsMagazines: false };
@@ -1728,7 +1830,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       const own = ownSkill(key), canonical = own?.[0] || key;
       merged[canonical] = (merged[canonical] || 0) + value;
       const category = own?.[2] || values.bonuses.skillCategories?.[key];
-      if (["combat", "applied"].includes(category)) categories[canonical] = category;
+      if (SKILL_CATEGORIES.some(([key2]) => key2 === category)) categories[canonical] = category;
     }
     values.bonuses.skills = merged;
     values.bonuses.skillCategories = categories;
@@ -1738,38 +1840,17 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
   const form = dialog.querySelector("form"), host = dialog.querySelector("[data-type-fields]");
   const rangeEditor = (prefix, value = {}) => "";
   const unusedRangeEditor = (prefix, value = {}) => `<fieldset class="od-range-reduction"><legend>Range penalty reduction \xB7 per band</legend>${RANGE_BANDS.map(([key, label]) => field(prefix + key, label, value[key] || 0, "number")).join("")}</fieldset>`;
-  function bonusEditor(bonuses = {}, allowSkills = true, allowRange = true) {
-    const assigned = Object.entries(bonuses.skills || {}), available = skillChoices.filter(([key]) => !assigned.some(([assignedKey]) => key === assignedKey));
-    const rows2 = assigned.map(([key, value]) => {
-      const own = ownSkill(key), label = own?.[1] || skillChoices.find(([k]) => k === key)?.[1] || key;
-      const category = own ? ["combat", "applied"].includes(own[2]) ? '<input type="hidden" name="skillCategory:' + esc(key) + '" value="' + esc(own[2]) + '">' : "" : select("skillCategory:" + key, "Category", [["combat", "Combat"], ["applied", "Applied"]], bonuses.skillCategories?.[key] || "applied");
-      return '<div class="od-bonus-skill-row">' + field("skill:" + key, label + " \xB7 level bonus", value, "number") + category + '<button type="button" data-remove-bonus-skill="' + esc(key) + '" aria-label="Remove ' + esc(label) + ' bonus" title="Remove skill bonus">\xD7</button></div>';
-    }).join("");
-    const picker = '<div class="od-bonus-skill-picker">' + select("bonusSkillChoice", "Skill", [["", "Choose skill"], ...available.map(([key, label]) => [key, label])], "") + field("bonusSkillValue", "Level bonus", 1, "number", 10) + '<button type="button" data-add-existing-bonus-skill title="Add selected skill bonus">+ Skill bonus</button></div>';
-    return '<fieldset class="od-bonuses"><legend>Passive bonuses</legend>' + (allowRange ? rangeEditor("bonusRange:", bonuses.rangeReduction) : "") + ATTRIBUTES.map((k) => field("attr:" + k, k, bonuses.attributes?.[k] || 0, "number")).join("") + (allowSkills ? '<div class="od-bonus-skills">' + rows2 + picker + '<details class="od-new-bonus-skill"><summary>New skill</summary><div class="od-bonus-new-fields">' + field("newBonusSkillName", "New skill name") + field("newBonusSkillValue", "Level bonus", 1, "number", 10) + select("newBonusSkillCategory", "Category", [["combat", "Combat"], ["applied", "Applied"]], "applied") + '<button type="button" data-add-bonus-skill title="Add new skill bonus">+ Skill bonus</button></div></details></div>' : "") + "</fieldset>";
+  function bonusEditor(bonuses = {}, allowSkills = true) {
+    return compactBonusEditor(bonuses, skillChoices, { allowSkills });
   }
   const abilityDrafts = new Map((existing.abilities || []).map((a) => [a.id, structuredClone(a)]));
-  function abilityBonusSkill(key = "", value = 0) {
-    return '<div class="cp-row od-ability-bonus-skill">' + field("abilityBonusSkill", "Skill name", key) + field("abilityBonusValue", "Level bonus", value, "number", 10) + '<button type="button" data-remove-ability-bonus aria-label="Remove skill bonus">\xD7</button></div>';
-  }
   function abilityRow(a = {}) {
-    const kind = a.kind || "skill";
-    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '">' + field("abilityName", "Ability", a.name || "") + field("abilityCost", "Mana cost", a.cost || 0, "number") + select("abilityKind", "Ability type", [["skill", "Granted skill"], ["bonus", "Activate bonuses"], ["attack", "Attack"]], kind) + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ATTRIBUTES.map((k) => field("abilityAttr:" + k, k, a.bonuses?.attributes?.[k] || 0, "number")).join("") + "<div data-ability-bonus-skills>" + Object.entries(a.bonuses?.skills || {}).map(([k, v]) => abilityBonusSkill(k, v)).join("") + '</div><button type="button" data-add-ability-bonus>Add skill bonus</button>') + field("abilityDescription", "Description", a.description || "") + '<button type="button" data-remove-ability aria-label="Remove ability">\xD7</button></fieldset>';
+    const kind = a.kind || (a.id ? "skill" : "utility"), currency = values.kind === "artifact" ? "Charge cost" : "Mana cost";
+    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["utility", "Use property"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"]], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
   }
   function readAbilityRow(row) {
     const previous = abilityDrafts.get(row.dataset.abilityId) || {}, get2 = (name, fallback = "") => row.querySelector('[name="' + name + '"]')?.value ?? fallback;
-    const bonuses = structuredClone(previous.bonuses || { attributes: {}, skills: {} });
-    if (row.querySelector('[name^="abilityAttr:"]')) {
-      bonuses.attributes = {};
-      for (const input of row.querySelectorAll('[name^="abilityAttr:"]')) if (Number(input.value)) bonuses.attributes[input.name.slice(12)] = Number(input.value);
-    }
-    if (row.querySelector("[data-ability-bonus-skills]")) {
-      bonuses.skills = {};
-      for (const r of row.querySelectorAll(".od-ability-bonus-skill")) {
-        const name = r.querySelector('[name="abilityBonusSkill"]').value.trim(), v = Number(r.querySelector('[name="abilityBonusValue"]').value) || 0;
-        if (name && v) bonuses.skills[name] = (bonuses.skills[name] || 0) + v;
-      }
-    }
+    const bonusRoot = row.querySelector('[data-bonus-editor="ability"]'), bonuses = bonusRoot ? readCompactBonuses(bonusRoot) : structuredClone(previous.bonuses || { attributes: {}, skills: {} });
     const ability = { id: row.dataset.abilityId, name: get2("abilityName"), kind: get2("abilityKind"), cost: Number(get2("abilityCost", previous.cost)) || 0, level: Number(get2("abilityLevel", previous.level)) || 0, description: get2("abilityDescription"), damage: Number(get2("abilityDamage", previous.damage)) || 0, accuracy: Number(get2("abilityAccuracy", previous.accuracy)) || 0, bonuses };
     abilityDrafts.set(ability.id, ability);
     return ability;
@@ -1785,24 +1866,9 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     if (form.elements.acceptsMagazines) values.acceptsMagazines = form.elements.acceptsMagazines.checked;
     if (form.querySelector("[data-equipment-slots]")) values.slots = [...form.querySelectorAll('[name="equipmentSlot"]:checked')].map((e) => e.value);
     values.playerRemovable = !!form.elements.playerRemovable?.checked;
-    if (values.kind === "artifact" && form.querySelector('[name^="activeAttr:"]')) {
-      values.activeBonuses = { attributes: {}, skills: {} };
-      for (const input of form.querySelectorAll('[name^="activeAttr:"],[name^="activeSkill:"]')) {
-        const [type2, ...key] = input.name.split(":");
-        if (Number(input.value)) values.activeBonuses[type2 === "activeAttr" ? "attributes" : "skills"][key.join(":")] = Number(input.value);
-      }
-    }
-    const bonuses = { attributes: {}, skills: {}, skillCategories: {} };
-    for (const input of form.querySelectorAll('[name^="attr:"],[name^="skill:"]')) {
-      const [kind, ...key] = input.name.split(":");
-      const value = Number(input.value) || 0;
-      if (value) bonuses[kind === "attr" ? "attributes" : "skills"][key.join(":")] = value;
-    }
-    for (const input of form.querySelectorAll('[name^="skillCategory:"]')) bonuses.skillCategories[input.name.slice(14)] = input.value;
-    if (form.querySelector(".od-bonuses")) {
-      bonuses.rangeReduction = normalizeRangeReduction(Object.fromEntries(RANGE_BANDS.map(([key]) => [key, data["bonusRange:" + key]])));
-      values.bonuses = bonuses;
-    }
+    const passive = form.querySelector('[data-bonus-editor=""]'), active = form.querySelector('[data-bonus-editor="active"]');
+    if (passive) values.bonuses = readCompactBonuses(passive);
+    if (active) values.activeBonuses = readCompactBonuses(active);
     if (form.elements["weaponRange:clinch"]) values.rangeReduction = normalizeRangeReduction(Object.fromEntries(RANGE_BANDS.map(([key]) => [key, data["weaponRange:" + key]])));
     if (form.querySelector("[data-abilities]")) values.abilities = [...form.querySelectorAll(".od-ability-row")].map(readAbilityRow).filter((a) => a.name.trim());
     values.ammoIds = [...form.querySelectorAll('[name="ammoCompatible"]:checked')].map((e) => e.value);
@@ -1820,10 +1886,10 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     }
     if (kind === "resource") html += bonusEditor(values.bonuses, true, false);
     if (kind === "artifact") {
-      html += field("chargeMax", "Maximum charges", values.chargeMax ?? 5, "number") + field("charges", "Current charges \xB7 GM correction", values.charges ?? values.chargeMax ?? 5, "number") + field("chargeCost", "Charges per use", values.chargeCost ?? 1, "number") + select("artifactEffect", "Active effect", [["property", "Passive property only"], ["mana", "Restore mana"], ["heal", "Heal body HP"], ["bonus", "Activate bonuses"]], values.artifactEffect || "property");
+      html += field("chargeMax", "Maximum charges", values.chargeMax ?? 5, "number") + field("charges", "Current charges \xB7 GM correction", values.charges ?? values.chargeMax ?? 5, "number") + field("chargeCost", "Default action \xB7 charge cost", values.chargeCost ?? 1, "number") + select("artifactEffect", "Default action", [["property", "No default action / passive property"], ["mana", "Restore mana"], ["heal", "Heal body HP"], ["bonus", "Activate bonuses"]], values.artifactEffect || "property");
       if (["mana", "heal"].includes(values.artifactEffect)) html += field("effectAmount", values.artifactEffect === "mana" ? "Mana restored" : "Critical wounds restored", values.effectAmount ?? 1, "number");
       html += bonusEditor(values.bonuses, true, false);
-      if (values.artifactEffect === "bonus") html += '<fieldset class="od-bonuses"><legend>Active bonuses \xB7 spend charges</legend>' + ATTRIBUTES.map((k) => field("activeAttr:" + k, k, values.activeBonuses?.attributes?.[k] || 0, "number")).join("") + skillChoices.map(([k, label]) => field("activeSkill:" + k, label + " \xB7 level bonus", values.activeBonuses?.skills?.[k] || 0, "number")).join("") + "</fieldset>";
+      if (values.artifactEffect === "bonus") html += compactBonusEditor(values.activeBonuses, skillChoices, { prefix: "active", label: "Active bonuses \xB7 spend charges" });
       html += '<p class="cp-muted">Passive bonuses and properties work while equipped. Active effects use this artifact\u2019s charges. The GM restores charges manually. Healing affects body wounds, not armor.</p>';
     }
     if (kind === "ammo") html += field("damage", "Damage / round", values.damage ?? 0, "number") + field("penetration", "Armor penetration", values.penetration ?? 0, "number");
@@ -1837,8 +1903,9 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     if (["armor", "shield", "prosthesis"].includes(kind)) {
       html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "prosthesis" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "prosthesis" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc(key) + '"')).join("") + "</fieldset>";
       if (kind === "prosthesis") html += '<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
-      if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable) + bonusEditor(values.bonuses, true, false) + `<fieldset><legend>Granted abilities \xB7 available only while equipped</legend><div data-abilities>${(values.abilities || []).map(abilityRow).join("")}</div><button type="button" data-add-ability>+ Ability</button></fieldset>`;
+      if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable) + bonusEditor(values.bonuses, true, false);
     }
+    if (["resource", "artifact", "prosthesis"].includes(kind)) html += '<fieldset class="od-item-abilities"><legend>Item abilities</legend><p class="cp-muted">' + (kind === "resource" ? "Available while carried \xB7 uses mana." : kind === "artifact" ? "Available while equipped \xB7 uses artifact charges." : "Available while equipped \xB7 uses mana.") + "</p><div data-abilities>" + (values.abilities || []).map(abilityRow).join("") + '</div><button type="button" data-add-ability title="Add ability">+ Ability</button></fieldset>';
     host.innerHTML = html;
     if (form.elements.weaponCategory && !existing.id) form.elements.weaponCategory.required = true;
     for (const input of host.querySelectorAll('[name^="attr:"],[name^="skill:"],[name^="activeAttr:"],[name^="activeSkill:"]')) input.min = "-999";
@@ -1860,54 +1927,8 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       render2();
     }
   });
-  form.addEventListener("input", (e) => {
-    if (e.target.name === "newBonusSkillName") form.elements.newBonusSkillCategory.closest("label").hidden = !!ownSkill(e.target.value);
-  });
+  installBonusEditors(dialog, skillChoices);
   form.addEventListener("click", (e) => {
-    var _a;
-    const remove = e.target.closest("[data-remove-bonus-skill]");
-    if (remove) {
-      collect();
-      delete values.bonuses.skills[remove.dataset.removeBonusSkill];
-      delete values.bonuses.skillCategories?.[remove.dataset.removeBonusSkill];
-      render2();
-      return;
-    }
-    if (e.target.closest("[data-add-existing-bonus-skill]")) {
-      const key = form.elements.bonusSkillChoice.value, bonus = Number(form.elements.bonusSkillValue.value) || 0;
-      if (!key || !bonus) return;
-      collect();
-      values.bonuses.skills[key] = bonus;
-      const own = ownSkill(key);
-      if (own && ["combat", "applied"].includes(own[2])) values.bonuses.skillCategories[key] = own[2];
-      render2();
-      return;
-    }
-    if (e.target.closest("[data-add-bonus-skill]")) {
-      const input = form.elements.newBonusSkillName, name = input.value.trim(), bonus = Number(form.elements.newBonusSkillValue.value) || 0;
-      if (!name || name.length > 40 || ["__proto__", "constructor", "prototype"].includes(name)) {
-        input.setCustomValidity("Enter a skill name (1\u201340 characters).");
-        input.reportValidity();
-        input.oninput = () => input.setCustomValidity("");
-        return;
-      }
-      collect();
-      let choice = findSkill(skillChoices, name);
-      if (!choice) {
-        choice = [name, name];
-        skillChoices.push(choice);
-      }
-      values.bonuses.skills[choice[0]] = bonus;
-      (_a = values.bonuses).skillCategories ?? (_a.skillCategories = {});
-      const own = ownSkill(choice[0]);
-      if (!own || ["combat", "applied"].includes(own[2])) values.bonuses.skillCategories[choice[0]] = own ? own[2] : values.newBonusSkillCategory;
-      render2();
-      return;
-    }
-    if (e.target.closest("[data-add-ability-bonus]")) {
-      e.target.closest(".od-ability-row").querySelector("[data-ability-bonus-skills]").insertAdjacentHTML("beforeend", abilityBonusSkill());
-    }
-    e.target.closest("[data-remove-ability-bonus]")?.closest(".od-ability-bonus-skill").remove();
     if (e.target.closest("[data-add-ability]")) {
       host.querySelector("[data-abilities]").insertAdjacentHTML("beforeend", abilityRow());
     }
@@ -5991,12 +6012,12 @@ function installCharacterTools(host) {
     if (gmActions.includes(action) || action.includes("template") || action.includes("library") || action.startsWith("account-")) check(tokenId, true);
     if (action === "activate-implant") {
       await host.activateAbility(tokenId, id, node.dataset.abilityId);
-      status("Prosthesis bonuses activated.", "success");
+      status("Item ability used.", "success");
       return;
     }
     if (action === "implant-attack") {
       host.selectImplantAttack(tokenId, node.dataset.key);
-      status("Prosthesis attack selected. Choose a target in Attack.", "success");
+      status("Item ability selected. Choose a target in Attack.", "success");
       return;
     }
     if (action === "add-item" || action === "edit-entry") {
@@ -7131,8 +7152,8 @@ function getArmorTotal(dataOrBody) {
 }
 function getBodyPartNames(dataOrBody) {
   const body = dataOrBody?.body ?? dataOrBody ?? {};
-  const names = Object.keys(body).filter((partName) => partName !== SHIELD_PART_NAME && partName !== SPECIAL_PART_NAME);
-  return names.sort((left, right) => {
+  const names2 = Object.keys(body).filter((partName) => partName !== SHIELD_PART_NAME && partName !== SPECIAL_PART_NAME);
+  return names2.sort((left, right) => {
     if (left === "Torso") return -1;
     if (right === "Torso") return 1;
     const leftIndex = BODY_TOTAL_ORDER.indexOf(left);
@@ -10483,10 +10504,11 @@ async function performAttackOnce({ manualDefense = false } = {}) {
   let skillName = manualDefense ? getActionFieldValue('[data-manual-attack-field="skill"]') || getActionFieldValue('[data-attack-field="skill"]') : getActionFieldValue('[data-attack-field="skill"]');
   const weaponName = skillName?.startsWith("magic:") || skillName?.startsWith("implant:") ? skillName : manualDefense ? getActionFieldValue('[data-manual-attack-field="weaponName"]') || getActionFieldValue('[data-attack-field="weaponName"]') : getActionFieldValue('[data-attack-field="weaponName"]');
   if (attackerAvallon.pilotMissing) throw Error("Vehicle driver is unavailable. Exit the vehicle or select another driver.");
-  if (weaponName?.startsWith("implant:") && !implantAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Prosthesis attack is no longer equipped. Select a weapon.");
+  if (weaponName?.startsWith("implant:") && !implantAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Item ability is no longer available. Select an attack.");
   if (weaponName?.startsWith("magic:") && !abilityAttacks(attackerAvallon).some((w) => w.selectionKey === weaponName)) throw Error("Ability is no longer available. Select an attack.");
   const selectedWeapon = getWeaponByName(attacker, weaponName);
-  if ((selectedWeapon.magicAbilityId || selectedWeapon.implantId) && manaStatus(getTrackerData(attacker).avallon).current < (selectedWeapon.cost || 0)) throw Error("Not enough mana.");
+  if (selectedWeapon.implantId) checkItemAbilityCost(getTrackerData(attacker), selectedWeapon.implantId, selectedWeapon.abilityId);
+  else if (selectedWeapon.magicAbilityId && manaStatus(getTrackerData(attacker).avallon).current < (selectedWeapon.cost || 0)) throw Error("Not enough mana.");
   if (selectedWeapon.implantId || selectedWeapon.magicAbilityId) skillName = selectedWeapon.selectionKey;
   const attackSkillValue = selectedWeapon.implantId || selectedWeapon.magicAbilityId ? selectedWeapon.level || 0 : attackerAvallon.skills[skillName] || 0;
   const shotPrefix = manualDefense ? "data-manual-attack-field" : "data-attack-field";
@@ -10625,14 +10647,14 @@ async function performAttackOnce({ manualDefense = false } = {}) {
     if (attackerAvallon.pilot?.id && next.avallon.vehicle?.pilotTokenId !== attackerAvallon.pilot.id) throw Error("Vehicle driver changed. Retry the attack.");
     if (selectedWeapon.implantId) {
       const ability = implantAttacks(next.avallon).find((w) => w.id === selectedWeapon.id);
-      if (!ability || ability.damage !== selectedWeapon.damage || ability.accuracy !== selectedWeapon.accuracy || ability.level !== selectedWeapon.level || ability.cost !== selectedWeapon.cost || ability.accuracy !== selectedWeapon.accuracy) throw Error("Prosthesis attack changed. Retry the attack.");
+      if (!ability || ability.damage !== selectedWeapon.damage || ability.accuracy !== selectedWeapon.accuracy || ability.level !== selectedWeapon.level || ability.cost !== selectedWeapon.cost || ability.resourceType !== selectedWeapon.resourceType) throw Error("Item ability changed. Retry the attack.");
     }
     if (selectedWeapon.magicAbilityId) {
       const ability = abilityAttacks(next.avallon).find((w) => w.id === selectedWeapon.id);
       if (!ability || ability.cost !== selectedWeapon.cost || ability.damage !== selectedWeapon.damage || ability.level !== selectedWeapon.level || ability.cost !== selectedWeapon.cost || ability.accuracy !== selectedWeapon.accuracy) throw Error("Ability changed. Retry.");
       spendMana(next.avallon, ability.cost);
     }
-    if (selectedWeapon.implantId) spendMana(next.avallon, selectedWeapon.cost || 0);
+    if (selectedWeapon.implantId) spendItemAbilityCost(next, selectedWeapon.implantId, selectedWeapon.abilityId);
     if (shot) {
       if (next.avallon.weapons.ranged[selectedWeapon.rangedIndex]?.id !== selectedWeapon.id) throw new Error("Weapon changed. Please retry the attack.");
       consumeAmmo(next.avallon, selectedWeapon.rangedIndex, shot);
@@ -11602,9 +11624,9 @@ lib_default.onReady(async () => {
       activateAbility: async (tokenId, itemId, abilityId) => {
         await updateTrackerData2(tokenId, (current2) => {
           const next = structuredClone(current2);
-          const ability = next.avallon.inventory.items.find((i) => i.id === itemId)?.abilities.find((a) => a.id === abilityId);
-          activateImplantAbility(next, itemId, abilityId);
-          spendMana(next.avallon, ability?.cost || 0);
+          const used = activateImplantAbility(next, itemId, abilityId);
+          next.lastRoll = { eventId: 0, actorName: playerName, summary: used.name + " \xB7 " + used.cost + " " + used.currency + " spent", outcome: "ability-use", timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
           return next;
         });
         await syncState();

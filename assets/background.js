@@ -413,7 +413,7 @@ var n = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
 function normalizeBonuses(raw) {
   const clean = (rows2, attributes = false) => Object.fromEntries(Object.entries(rows2 || {}).filter(([k, v]) => k.length <= 80 && !["__proto__", "constructor", "prototype"].includes(k) && (!attributes || ATTRIBUTES.includes(k)) && n(v)).slice(0, 80).map(([k, v]) => [k, n(v)]));
   const rangeReduction = normalizeRangeReduction(raw?.rangeReduction);
-  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => ["combat", "applied"].includes(raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
+  const skillCategories = Object.fromEntries(Object.keys(clean(raw?.skills)).filter((k) => SKILL_CATEGORIES.some(([category]) => category === raw?.skillCategories?.[k])).map((k) => [k, raw.skillCategories[k]]));
   return { attributes: clean(raw?.attributes, true), skills: clean(raw?.skills), ...Object.keys(skillCategories).length ? { skillCategories } : {}, ...Object.keys(rangeReduction).length ? { rangeReduction } : {} };
 }
 function normalizeEffects(raw) {
@@ -512,7 +512,7 @@ function normalizeAbilities(raw) {
 }
 
 // artifactRules.js
-var count = (v, max = 999) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
+var count = (v, max = 999) => Math.max(0, Math.min(max, Math.round((Number(v) || 0) * 2) / 2));
 function normalizeArtifact(raw = {}) {
   const chargeMax = count(raw.chargeMax);
   return { chargeMax, charges: count(raw.charges ?? chargeMax, chargeMax), chargeCost: count(raw.chargeCost ?? 1), artifactEffect: ["mana", "heal", "bonus", "property"].includes(raw.artifactEffect) ? raw.artifactEffect : "property", effectAmount: Math.round(Math.max(0, Math.min(999, Number(raw.effectAmount) || 0)) * 2) / 2, activeBonuses: normalizeBonuses(raw.activeBonuses) };
@@ -531,7 +531,7 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
     const { id, quantity, equippedPart, previousArmor, legacyEquipment, ...definition } = item;
     if (!["consumable", "medical"].includes(item.kind)) for (const k of ["subtype", "healCritical", "useSkill"]) delete definition[k];
     if (!["armor", "shield", "prosthesis"].includes(item.kind)) for (const k of ["armor", "criticalMax", "criticalDamage", "slots", "slot", "playerRemovable"]) delete definition[k];
-    if (item.kind !== "prosthesis") delete definition.abilities;
+    if (!["prosthesis", "resource", "artifact"].includes(item.kind)) delete definition.abilities;
     else definition.abilities = (definition.abilities || []).map(({ id: id2, ...ability }) => ability);
     if (definition.bonuses) {
       definition.bonuses = structuredClone(definition.bonuses);
@@ -584,7 +584,7 @@ function normalizeInventory(raw, weapons = [], preferredId = "", skillLabels = {
       criticalDamage: int(r.criticalDamage, int(r.criticalMax, 999)),
       playerRemovable: r.playerRemovable === true,
       bonuses: normalizeBonuses(["resource", "prosthesis"].includes(r.kind) ? { ...r.bonuses, rangeReduction: {} } : r.bonuses),
-      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
+      abilities: (Array.isArray(r.abilities) ? r.abilities : []).slice(0, 20).map((a, j) => ({ id: text(a.id || "ability-" + j), name: text(a.name) || "Ability", level: int(a.level, 10), cost: Math.round(Math.max(0, Math.min(999, Number(a.cost) || 0)) * 2) / 2, description: text(a.description, 2e3), ...a.kind && a.kind !== "skill" ? { kind: ["bonus", "attack", "utility"].includes(a.kind) ? a.kind : "skill", bonuses: normalizeBonuses(a.bonuses), damage: int(a.damage, 999), accuracy: Math.max(-999, Math.min(999, Number(a.accuracy) || 0)) } : {} })),
       ...r.kind === "artifact" ? normalizeArtifact(r) : {},
       legacyEquipment: r.legacyEquipment ?? (raw?.version < 3 || !raw?.version),
       equippedPart: text(r.equippedPart, 40),

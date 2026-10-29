@@ -1,3 +1,4 @@
+import {manaStatus} from '../magicRules.js';
 import {abilityRows,manaRow} from './magicTools.js';
 import {skillCap} from '../avallonConfig.js';
 import {groupNamedItems} from '../itemGroups.js';
@@ -31,7 +32,7 @@ export function inventoryView(tracker,gm) {
     const usable=['consumable','medical'].includes(i.kind),subtype=i.kind==='medical'?'medkit':i.subtype;
     let controls='';
     if(i.kind==='artifact'){
-      controls=(i.artifactEffect==='property'?'<span class="cp-pill">Passive property</span>':'<span class="cp-pill">Charges '+i.charges+'/'+i.chargeMax+'</span>')+'<button type="button" data-artifact-action="'+(i.equippedPart?'unequip':'equip')+'" data-id="'+esc(i.id)+'">'+(i.equippedPart?'Unequip':'Equip')+'</button>'+(i.equippedPart&&i.artifactEffect!=='property'?'<button type="button" data-artifact-action="use" data-id="'+esc(i.id)+'" '+(i.charges<i.chargeCost?'disabled':'')+'>Use · '+i.chargeCost+' charges</button>':'');
+      controls=(i.artifactEffect==='property'&&!(i.abilities||[]).some(a=>a.kind&&a.kind!=='skill')?'<span class="cp-pill">Passive property</span>':'<span class="cp-pill">Charges '+i.charges+'/'+i.chargeMax+'</span>')+'<button type="button" data-artifact-action="'+(i.equippedPart?'unequip':'equip')+'" data-id="'+esc(i.id)+'">'+(i.equippedPart?'Unequip':'Equip')+'</button>'+(i.equippedPart&&i.artifactEffect!=='property'?'<button type="button" data-artifact-action="use" data-id="'+esc(i.id)+'" '+(i.charges<i.chargeCost?'disabled':'')+'>Use · '+i.chargeCost+' charges</button>':'');
     }else if(equipment) {
       const label=i.equippedPart?'<span class="cp-muted">'+esc(tracker.body[i.equippedPart]?.label||i.equippedPart)+'</span>':'';
       if(!gm&&i.kind==='prosthesis'&&!i.playerRemovable)controls=label+'<span class="cp-pill">GM installation / removal only</span>';
@@ -65,5 +66,9 @@ export function templatesView(library, gm) {
 }
 
 function prosthesisAbilityRows(o){
-  return activeImplantAbilities(o).map(({item,ability,key})=>'<article class="cp-card cp-row"><b>'+esc(ability.name)+'</b><span class="cp-muted">'+esc(item.name)+'</span>'+descriptionButton(ability.name,ability.description)+(ability.kind==='attack'?'<span class="cp-pill">DMG '+ability.damage+'</span><button type="button" data-od-action="implant-attack" data-key="'+esc(key)+'">Prepare attack</button>':'<button type="button" data-od-action="activate-implant" data-id="'+esc(item.id)+'" data-ability-id="'+esc(ability.id)+'" '+((o.effects||[]).some(e=>e.id==='implant-effect:'+item.id+':'+ability.id)?'disabled':'')+'>Activate bonuses</button>')+'</article>').join('');
+  const rows=activeImplantAbilities(o);if(!rows.length)return '';
+  return '<div class="cp-section-title">Item abilities</div>'+rows.map(({item,ability,key})=>{
+    const currency=item.kind==='artifact'?'charges':'mana',cost=ability.cost||0,available=currency==='charges'?item.charges:manaStatus(o).current,active=(o.effects||[]).some(e=>e.id==='implant-effect:'+item.id+':'+ability.id);
+    return '<article class="cp-card cp-row"><b>'+esc(ability.name)+'</b><span class="cp-muted">'+esc(item.name)+'</span><span class="cp-pill">'+(ability.level||0)+'/10 · '+cost+' '+currency+'</span>'+descriptionButton(ability.name,ability.description)+(ability.kind==='attack'?'<span class="cp-pill">DMG '+ability.damage+'</span><button type="button" data-od-action="implant-attack" data-key="'+esc(key)+'" '+(available<cost?'disabled':'')+'>Prepare attack</button>':'<button type="button" data-od-action="activate-implant" data-id="'+esc(item.id)+'" data-ability-id="'+esc(ability.id)+'" '+(available<cost||ability.kind==='bonus'&&active?'disabled':'')+'>'+(ability.kind==='bonus'?'Activate bonuses':'Use ability')+'</button>')+'</article>';
+  }).join('');
 }
