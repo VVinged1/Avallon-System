@@ -401,7 +401,10 @@ function persistLogEntries(sdk, entries) {
   }).then(async () => {
     const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
     for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
-    await sdk.room.setMetadata({ [LOG_KEY]: [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50) });
+    const rows = [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50), size = () => new TextEncoder().encode(JSON.stringify({ ...metadata, [LOG_KEY]: rows })).length;
+    while (rows.length > 1 && size() > 16e3) rows.pop();
+    if (size() > 16e3) throw Error("Not enough room metadata space for this log entry.");
+    await sdk.room.setMetadata({ [LOG_KEY]: rows });
   });
   queues.set(sdk, task);
   return task;
@@ -3804,7 +3807,7 @@ function renderEntries() {
             <div class="entry-time">${escapeHtml(entry.timestamp || "Unknown time")}</div>
           </div>
           <div class="kind-pill ${kindClass(entry.kind)}">${escapeHtml(formatKind(entry.kind))}</div>
-          <pre class="entry-body">${escapeHtml(entry.body)}</pre>
+          <pre class="entry-body${entry.body.includes("\u2552") ? " entry-body-table" : ""}">${escapeHtml(entry.body)}</pre>
         </article>`
   ).join("");
 }

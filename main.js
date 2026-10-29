@@ -4205,22 +4205,33 @@ function getActionFieldValue(selector) {
   return field.value;
 }
 
+function abilityUseBody(actor,used,summary){return (used.check?formatRollSkillDebug({tokenName:getCharacterName(actor),skillName:used.name,result:used.check})+'\n\n':'')+summary+'\nSpent: '+used.cost+' '+(used.currency||'mana');}
+function itemUseBody(actor,result){return [result.summary,...result.stages.map((stage,index)=>'\nStage '+(index+1)+' · '+stage.name+'\n'+(stage.kind==='attribute'?formatRollCharDebug({tokenName:actor,attributeLabel:stage.name,result:stage.result}):formatRollSkillDebug({tokenName:actor,skillName:stage.name,result:stage.result})))].join('\n');}
+function onceAbilityRoll(){let rolled;return(level,modifier)=>{if(rolled&&(rolled.baseSkill!==level||rolled.modifier!==modifier))throw Error('Ability level changed. Retry the check.');return rolled??=rollSkillCheck(level,modifier);};}
+async function useCharacterAbility(tokenId,abilityId){
+ const actor=getCharacterById(tokenId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
+ const initial=getTrackerData(actor),ability=initial.avallon.abilities.find(a=>a.id===abilityId);if(!ability)throw Error('Ability no longer exists.');
+ if(ability.kind==='utility'&&ability.statusName)return useNarrativeStatus(tokenId,'',abilityId);
+ let used;const rollSkill=onceAbilityRoll(),modifier=Number(document.querySelector('[data-profile-modifier="skill"]')?.value)||0;
+ await updateTrackerData(tokenId,current=>{if(!canUseToken(actor))throw Error('Character unavailable.');const next=structuredClone(current);used={...activateAbility(next,abilityId,{rollSkill,modifier}),currency:'mana'};used.summary=used.name+' · '+used.check.totalPrimary+' vs '+used.check.totalSecondary+' ('+used.check.result+') · '+used.cost+' mana spent';next.lastRoll={eventId:0,actorName:getCharacterName(actor),summary:used.summary,outcome:used.check.outcome,total:used.check.totalPrimary,timestamp:new Date().toISOString(),source:'avallon-extension'};next.history=[next.lastRoll,...(next.history||[])].slice(0,12);return next;});
+ await syncState();scheduleRender();try{await pushDebugEntry(getCharacterName(actor)+' uses '+used.name,abilityUseBody(actor,used,used.summary),used.success?'success':'error');}catch{used.summary+=' · public log unavailable';}return used;
+}
 async function useNarrativeStatus(sourceId,itemId,abilityId){
   const actor=getCharacterById(sourceId);if(!actor||!canUseToken(actor))throw Error('Character unavailable.');
   const initial=getTrackerData(actor),ability=itemId?checkItemAbilityCost(initial,itemId,abilityId).ability:initial.avallon.abilities.find(a=>a.id===abilityId);
   if(!ability||ability.kind!=='utility'||!ability.statusName)throw Error('Narrative status ability unavailable.');
-  const expected=JSON.stringify([ability.kind,ability.cost,ability.statusName,ability.statusDescription]);
+  const expected=JSON.stringify([ability.kind,ability.cost,ability.level,ability.statusName,ability.statusDescription]);
   const choice=await formDialog('Apply status · '+ability.statusName,[{name:'target',label:'Target',value:'',options:[['','Self'],...characterListCache.filter(t=>t.id!==sourceId&&(isEditable()||t.visible!==false)).map(t=>[t.id,getCharacterName(t)])]}],{submitLabel:'Use ability',message:ability.statusDescription||ability.description||'Narrative reminder only.'});if(!choice)return null;
-  const targetId=choice.target||sourceId,statusId=crypto.randomUUID();let result;
+  const targetId=choice.target||sourceId,statusId=crypto.randomUUID(),rollSkill=onceAbilityRoll(),modifier=Number(document.querySelector('[data-profile-modifier="skill"]')?.value)||0;let result;
   await queueTrackerWrite(sourceId,()=>OBR.scene.items.updateItems([...new Set([sourceId,targetId])],items=>{
     const source=items.find(t=>t.id===sourceId),target=items.find(t=>t.id===targetId);if(!source||!target||!canUseToken(source)||!isEditable()&&target.id!==sourceId&&target.visible===false)throw Error('Character or target unavailable.');
     const sourceData=getTrackerData(source),targetData=source===target?sourceData:getTrackerData(target);
-    result=applyNarrativeAbility({source:sourceData,target:targetData,itemId,abilityId,sourceTokenId:sourceId,sourceName:source.visible===false?'':getCharacterName(source),statusId,expected});
-    result.summary=result.used.name+' → '+getCharacterName(target)+' · '+result.status.name+' · '+result.used.cost+' '+result.used.currency+' spent';
-    result.source.lastRoll={eventId:0,actorName:getCharacterName(source),summary:result.summary,outcome:'narrative-status',timestamp:new Date().toISOString(),source:'avallon-extension'};result.source.history=[result.source.lastRoll,...(result.source.history||[])].slice(0,12);
-    source.metadata[META_KEY]=sanitizeTrackerData(result.source);if(source!==target)target.metadata[META_KEY]=sanitizeTrackerData(result.target);
+    result=applyNarrativeAbility({source:sourceData,target:targetData,itemId,abilityId,sourceTokenId:sourceId,sourceName:source.visible===false?'':getCharacterName(source),statusId,expected,rollSkill:itemId?undefined:rollSkill,modifier});
+    result.summary=result.used.name+' → '+getCharacterName(target)+' · '+(result.status?result.status.name:'Check failed · status not applied')+(result.used.check?' · '+result.used.check.totalPrimary+' vs '+result.used.check.totalSecondary+' ('+result.used.check.result+')':'')+' · '+result.used.cost+' '+result.used.currency+' spent';
+    result.source.lastRoll={eventId:0,actorName:getCharacterName(source),summary:result.summary,outcome:result.used.check?.outcome||'narrative-status',...(result.used.check?{total:result.used.check.totalPrimary}:{}),timestamp:new Date().toISOString(),source:'avallon-extension'};result.source.history=[result.source.lastRoll,...(result.source.history||[])].slice(0,12);
+    source.metadata[META_KEY]=sanitizeTrackerData(result.source);if(source!==target&&result.success)target.metadata[META_KEY]=sanitizeTrackerData(result.target);
   }));await syncState();scheduleRender();
-  try{await pushDebugEntry(getCharacterName(actor)+' · '+result.used.name,result.summary,'success');}catch{result.summary+=' · public log unavailable';}
+  try{await pushDebugEntry(getCharacterName(actor)+' · '+result.used.name,abilityUseBody(actor,result.used,result.summary),result.success?'success':'error');}catch{result.summary+=' · public log unavailable';}
   return result;
 }
 async function useItemAbility(tokenId,itemId,abilityId){
@@ -4774,7 +4785,7 @@ async function useCharacterItem(sourceId,itemId,targetId,partName,attribute='') 
     if(source!==target&&result.success)target.metadata[META_KEY]=sanitizeTrackerData(result.target);
   }));
   await syncState();await Promise.all([...new Set([sourceId,targetId])].map(ensureOverlayForToken));scheduleRender();
-  if(result.mode!=='none')try{await pushDebugEntry(actorName+' uses '+result.itemName,result.summary,result.success?'success':'error');}catch(error){console.warn('[Avallon] Item use was saved; public log failed',error);result.summary+=' · Public log unavailable; result saved on character.';}
+  if(result.mode!=='none')try{await pushDebugEntry(actorName+' uses '+result.itemName,itemUseBody(actorName,result),result.success?'success':'error');}catch(error){console.warn('[Avallon] Item use was saved; public log failed',error);result.summary+=' · Public log unavailable; result saved on character.';}
   return {summary:result.summary,success:result.success};
 }
 
@@ -5506,7 +5517,7 @@ OBR.onReady(async () => {
     new MutationObserver(()=>paintAbilityAttackFields()).observe(ui.selectedTokenPanel,{childList:true,subtree:true});
     installStatusTools({getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,update:updateTrackerData,status:setStatus,render:scheduleRender});
     installArtifactTools({useAbility:useItemAbility,prepareAbility:prepareItemAbilityAttack,getToken:id=>getCharacterById(id??activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,update:updateTrackerData,render:scheduleRender,status:setStatus});
-    installMagicTools({useNarrative:(id,abilityId)=>useNarrativeStatus(id,'',abilityId),getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
+    installMagicTools({useAbility:useCharacterAbility,useNarrative:(id,abilityId)=>useNarrativeStatus(id,'',abilityId),getToken:()=>getCharacterById(activeTokenId),getRole:()=>playerRole,canControl:canUseToken,tracker:getTrackerData,effective:getAvallonData,update:updateTrackerData,render:scheduleRender,status:setStatus,log:pushDebugEntry,prepare:(id,key)=>{const t=getCharacterById(id),w=getWeaponByName(t,key);syncAttackWeaponInputs(id,key,w.damage,w.accuracy);scheduleRender();}});
     bindUiEvents();
     await removeAttackTargetContextMenu();
     await Promise.all([

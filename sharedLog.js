@@ -11,7 +11,11 @@ export function persistLogEntries(sdk,entries){
  const task=(queues.get(sdk)||Promise.resolve()).catch(()=>{}).then(async()=>{
   const metadata=await sdk.room.getMetadata(),merged=new Map();
   for(const entry of [...(Array.isArray(metadata?.[LOG_KEY])?metadata[LOG_KEY]:[]),...entries])if(entry&&Number.isFinite(entry.id))merged.set(entry.id,entry);
-  await sdk.room.setMetadata({[LOG_KEY]:[...merged.values()].sort((a,b)=>b.id-a.id).slice(0,50)});
+  const rows=[...merged.values()].sort((a,b)=>b.id-a.id).slice(0,50),size=()=>new TextEncoder().encode(JSON.stringify({...metadata,[LOG_KEY]:rows})).length;
+  // Dice tables are larger than summaries. Keep newest events within the room budget.
+  while(rows.length>1&&size()>16000)rows.pop();
+  if(size()>16000)throw Error('Not enough room metadata space for this log entry.');
+  await sdk.room.setMetadata({[LOG_KEY]:rows});
  });queues.set(sdk,task);return task;
 }
 export async function publishLogEntry(sdk,entry,isGm){

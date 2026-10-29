@@ -19,3 +19,7 @@ failSave=true;await assert.rejects(publishLogEntry(sdk,first,true));
 failBroadcast=false;await publishLogEntry(sdk,first,true);
 failSave=false;await persistLogEntries(sdk,[first]);
 console.log('Shared log passed: player broadcast, GM relay, deduplication, queued writes, limits, delivery fallback and failure recovery.');
+
+state.metadata.extra='x'.repeat(8000);const tableEntries=Array.from({length:20},(_,i)=>createLogEntry('Dice table '+i,'│ '+('Расчёт '.repeat(120))+' │'));
+await Promise.all(tableEntries.map(entry=>persistLogEntries(sdk,[entry])));assert(new TextEncoder().encode(JSON.stringify(state.metadata)).length<=16000);assert.equal(state.metadata[LOG_KEY][0].id,tableEntries.at(-1).id);assert(state.metadata[LOG_KEY].length<20);
+console.log('Large Unicode dice tables fit the room metadata budget and retain the newest result.');

@@ -463,3 +463,4 @@ h2 {
     white-space: normal;
   }
 }
+.entry-body-table { white-space: pre; }

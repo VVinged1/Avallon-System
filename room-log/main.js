@@ -305,7 +305,7 @@ function renderEntries() {
             <div class="entry-time">${escapeHtml(entry.timestamp || "Unknown time")}</div>
           </div>
           <div class="kind-pill ${kindClass(entry.kind)}">${escapeHtml(formatKind(entry.kind))}</div>
-          <pre class="entry-body">${escapeHtml(entry.body)}</pre>
+          <pre class="entry-body${entry.body.includes('╒')?' entry-body-table':''}">${escapeHtml(entry.body)}</pre>
         </article>`,
     )
     .join("");

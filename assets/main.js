@@ -407,7 +407,10 @@ function persistLogEntries(sdk, entries) {
   }).then(async () => {
     const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
     for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
-    await sdk.room.setMetadata({ [LOG_KEY]: [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50) });
+    const rows2 = [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50), size = () => new TextEncoder().encode(JSON.stringify({ ...metadata, [LOG_KEY]: rows2 })).length;
+    while (rows2.length > 1 && size() > 16e3) rows2.pop();
+    if (size() > 16e3) throw Error("Not enough room metadata space for this log entry.");
+    await sdk.room.setMetadata({ [LOG_KEY]: rows2 });
   });
   queues.set(sdk, task);
   return task;
@@ -730,19 +733,21 @@ function setMana(o, current2) {
 function abilityAttacks(o) {
   return (o.abilities || []).filter((a) => a.kind === "attack").map((a) => ({ id: "magic:" + a.id, selectionKey: "magic:" + a.id, magicAbilityId: a.id, name: a.name + " \xB7 mana " + a.cost, damage: a.damage, accuracy: a.accuracy, level: a.level || 0, cost: a.cost }));
 }
-function activateAbility(tracker, id) {
+function activateAbility(tracker, id, { rollSkill, modifier: modifier2 = 0 } = {}) {
   var _a;
   const a = tracker.avallon.abilities.find((a2) => a2.id === id);
   if (!a || a.kind === "attack") throw Error("Choose a non-attack ability.");
   const key = "ability-effect:" + id;
   if (a.kind === "bonus" && (tracker.avallon.effects || []).some((e) => e.id === key)) throw Error("Ability effect is already active.");
   if (a.kind === "bonus" && (tracker.avallon.effects || []).length >= 100) throw Error("Too many active effects.");
+  if (manaStatus(tracker.avallon).current < a.cost) throw Error("Not enough mana.");
+  const check = rollSkill ? rollSkill(a.level || 0, modifier2) : null, success = !check || ["success", "critical-success"].includes(check.outcome);
   spendMana(tracker.avallon, a.cost);
-  if (a.kind === "bonus") {
+  if (a.kind === "bonus" && success) {
     (_a = tracker.avallon).effects ?? (_a.effects = []);
     tracker.avallon.effects.push({ id: key, name: a.name, bonuses: normalizeBonuses(a.bonuses) });
   }
-  return a;
+  return { ...a, ...check ? { check, success } : {} };
 }
 
 // implantAbilities.js
@@ -789,15 +794,17 @@ function activateImplantAbility(tracker, itemId, abilityId, { rollSkill, modifie
 }
 
 // narrativeUse.js
-function applyNarrativeAbility({ source, target, itemId = "", abilityId, sourceTokenId, sourceName, statusId, expected }) {
+function applyNarrativeAbility({ source, target, itemId = "", abilityId, sourceTokenId, sourceName, statusId, expected, rollSkill, modifier: modifier2 = 0 }) {
   const ability = itemId ? checkItemAbilityCost(source, itemId, abilityId).ability : source.avallon.abilities.find((a) => a.id === abilityId);
   if (!ability || ability.kind !== "utility" || !ability.statusName) throw Error("Narrative status ability is unavailable.");
-  const definition = JSON.stringify([ability.kind, ability.cost, ability.statusName, ability.statusDescription]);
+  const definition = JSON.stringify([ability.kind, ability.cost, ability.level, ability.statusName, ability.statusDescription]);
   if (expected && expected !== definition) throw Error("Ability changed. Choose the target again.");
-  const nextSource = structuredClone(source), nextTarget = source === target ? nextSource : structuredClone(target);
-  const status = addNarrativeStatus(nextTarget, { id: statusId, name: ability.statusName, description: ability.statusDescription || ability.description || "", sourceName, sourceKey: sourceTokenId + ":" + itemId + ":" + abilityId });
-  const used = itemId ? activateImplantAbility(nextSource, itemId, abilityId) : { ...activateAbility(nextSource, abilityId), currency: "mana" };
-  return { source: nextSource, target: nextTarget, status, used };
+  const nextSource = structuredClone(source), projected = structuredClone(target);
+  const status = addNarrativeStatus(projected, { id: statusId, name: ability.statusName, description: ability.statusDescription || ability.description || "", sourceName, sourceKey: sourceTokenId + ":" + itemId + ":" + abilityId });
+  const used = itemId ? activateImplantAbility(nextSource, itemId, abilityId) : { ...activateAbility(nextSource, abilityId, { rollSkill, modifier: modifier2 }), currency: "mana" };
+  const success = !used.check || ["success", "critical-success"].includes(used.check.outcome);
+  if (success && source === target) nextSource.avallon.statuses = projected.avallon.statuses;
+  return { source: nextSource, target: source === target ? nextSource : success ? projected : target, status: success ? status : null, used, success };
 }
 
 // ui/descriptions.js
@@ -949,28 +956,9 @@ function installMagicTools(host) {
           return next;
         });
       } else if (action === "use") {
-        const configured = t.avallon.abilities.find((a) => a.id === abilityId);
-        if (configured?.kind === "utility" && configured.statusName) {
-          const result = await host.useNarrative(id, abilityId);
-          if (result) host.status(result.summary, "success");
-          return;
-        }
-        let used;
-        await host.update(id, (current2) => {
-          if (!host.canControl(token)) throw Error("Character unavailable.");
-          const next = structuredClone(current2);
-          used = activateAbility(next, abilityId);
-          next.lastRoll = { summary: used.name + " \xB7 used " + used.cost + " mana", outcome: "ability-use", actorName: token.name, eventId: 0, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
-          next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
-          return next;
-        });
-        try {
-          await host.log(token.name + " uses " + used.name, used.cost + " mana spent", "success");
-        } catch {
-          host.status("Ability saved and mana spent; public log unavailable.", "error");
-          host.render();
-          return;
-        }
+        const used = await host.useAbility(id, abilityId);
+        if (used) host.status(used.summary, used.success === false ? "error" : "success");
+        return;
       }
       host.render();
       host.status("Saved.", "success");
@@ -10655,31 +10643,70 @@ function getActionFieldValue(selector) {
   }
   return field.value;
 }
+function abilityUseBody(actor, used, summary) {
+  return (used.check ? formatRollSkillDebug({ tokenName: getCharacterName(actor), skillName: used.name, result: used.check }) + "\n\n" : "") + summary + "\nSpent: " + used.cost + " " + (used.currency || "mana");
+}
+function itemUseBody(actor, result) {
+  return [result.summary, ...result.stages.map((stage, index) => "\nStage " + (index + 1) + " \xB7 " + stage.name + "\n" + (stage.kind === "attribute" ? formatRollCharDebug({ tokenName: actor, attributeLabel: stage.name, result: stage.result }) : formatRollSkillDebug({ tokenName: actor, skillName: stage.name, result: stage.result })))].join("\n");
+}
+function onceAbilityRoll() {
+  let rolled;
+  return (level, modifier2) => {
+    if (rolled && (rolled.baseSkill !== level || rolled.modifier !== modifier2)) throw Error("Ability level changed. Retry the check.");
+    return rolled ?? (rolled = rollSkillCheck(level, modifier2));
+  };
+}
+async function useCharacterAbility(tokenId, abilityId) {
+  const actor = getCharacterById(tokenId);
+  if (!actor || !canUseToken(actor)) throw Error("Character unavailable.");
+  const initial = getTrackerData(actor), ability = initial.avallon.abilities.find((a) => a.id === abilityId);
+  if (!ability) throw Error("Ability no longer exists.");
+  if (ability.kind === "utility" && ability.statusName) return useNarrativeStatus(tokenId, "", abilityId);
+  let used;
+  const rollSkill = onceAbilityRoll(), modifier2 = Number(document.querySelector('[data-profile-modifier="skill"]')?.value) || 0;
+  await updateTrackerData2(tokenId, (current2) => {
+    if (!canUseToken(actor)) throw Error("Character unavailable.");
+    const next = structuredClone(current2);
+    used = { ...activateAbility(next, abilityId, { rollSkill, modifier: modifier2 }), currency: "mana" };
+    used.summary = used.name + " \xB7 " + used.check.totalPrimary + " vs " + used.check.totalSecondary + " (" + used.check.result + ") \xB7 " + used.cost + " mana spent";
+    next.lastRoll = { eventId: 0, actorName: getCharacterName(actor), summary: used.summary, outcome: used.check.outcome, total: used.check.totalPrimary, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+    next.history = [next.lastRoll, ...next.history || []].slice(0, 12);
+    return next;
+  });
+  await syncState();
+  scheduleRender();
+  try {
+    await pushDebugEntry(getCharacterName(actor) + " uses " + used.name, abilityUseBody(actor, used, used.summary), used.success ? "success" : "error");
+  } catch {
+    used.summary += " \xB7 public log unavailable";
+  }
+  return used;
+}
 async function useNarrativeStatus(sourceId, itemId, abilityId) {
   const actor = getCharacterById(sourceId);
   if (!actor || !canUseToken(actor)) throw Error("Character unavailable.");
   const initial = getTrackerData(actor), ability = itemId ? checkItemAbilityCost(initial, itemId, abilityId).ability : initial.avallon.abilities.find((a) => a.id === abilityId);
   if (!ability || ability.kind !== "utility" || !ability.statusName) throw Error("Narrative status ability unavailable.");
-  const expected = JSON.stringify([ability.kind, ability.cost, ability.statusName, ability.statusDescription]);
+  const expected = JSON.stringify([ability.kind, ability.cost, ability.level, ability.statusName, ability.statusDescription]);
   const choice = await formDialog("Apply status \xB7 " + ability.statusName, [{ name: "target", label: "Target", value: "", options: [["", "Self"], ...characterListCache.filter((t) => t.id !== sourceId && (isEditable() || t.visible !== false)).map((t) => [t.id, getCharacterName(t)])] }], { submitLabel: "Use ability", message: ability.statusDescription || ability.description || "Narrative reminder only." });
   if (!choice) return null;
-  const targetId = choice.target || sourceId, statusId = crypto.randomUUID();
+  const targetId = choice.target || sourceId, statusId = crypto.randomUUID(), rollSkill = onceAbilityRoll(), modifier2 = Number(document.querySelector('[data-profile-modifier="skill"]')?.value) || 0;
   let result;
   await queueTrackerWrite(sourceId, () => lib_default.scene.items.updateItems([.../* @__PURE__ */ new Set([sourceId, targetId])], (items) => {
     const source = items.find((t) => t.id === sourceId), target = items.find((t) => t.id === targetId);
     if (!source || !target || !canUseToken(source) || !isEditable() && target.id !== sourceId && target.visible === false) throw Error("Character or target unavailable.");
     const sourceData = getTrackerData(source), targetData = source === target ? sourceData : getTrackerData(target);
-    result = applyNarrativeAbility({ source: sourceData, target: targetData, itemId, abilityId, sourceTokenId: sourceId, sourceName: source.visible === false ? "" : getCharacterName(source), statusId, expected });
-    result.summary = result.used.name + " \u2192 " + getCharacterName(target) + " \xB7 " + result.status.name + " \xB7 " + result.used.cost + " " + result.used.currency + " spent";
-    result.source.lastRoll = { eventId: 0, actorName: getCharacterName(source), summary: result.summary, outcome: "narrative-status", timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
+    result = applyNarrativeAbility({ source: sourceData, target: targetData, itemId, abilityId, sourceTokenId: sourceId, sourceName: source.visible === false ? "" : getCharacterName(source), statusId, expected, rollSkill: itemId ? void 0 : rollSkill, modifier: modifier2 });
+    result.summary = result.used.name + " \u2192 " + getCharacterName(target) + " \xB7 " + (result.status ? result.status.name : "Check failed \xB7 status not applied") + (result.used.check ? " \xB7 " + result.used.check.totalPrimary + " vs " + result.used.check.totalSecondary + " (" + result.used.check.result + ")" : "") + " \xB7 " + result.used.cost + " " + result.used.currency + " spent";
+    result.source.lastRoll = { eventId: 0, actorName: getCharacterName(source), summary: result.summary, outcome: result.used.check?.outcome || "narrative-status", ...result.used.check ? { total: result.used.check.totalPrimary } : {}, timestamp: (/* @__PURE__ */ new Date()).toISOString(), source: "avallon-extension" };
     result.source.history = [result.source.lastRoll, ...result.source.history || []].slice(0, 12);
     source.metadata[META_KEY] = sanitizeTrackerData(result.source);
-    if (source !== target) target.metadata[META_KEY] = sanitizeTrackerData(result.target);
+    if (source !== target && result.success) target.metadata[META_KEY] = sanitizeTrackerData(result.target);
   }));
   await syncState();
   scheduleRender();
   try {
-    await pushDebugEntry(getCharacterName(actor) + " \xB7 " + result.used.name, result.summary, "success");
+    await pushDebugEntry(getCharacterName(actor) + " \xB7 " + result.used.name, abilityUseBody(actor, result.used, result.summary), result.success ? "success" : "error");
   } catch {
     result.summary += " \xB7 public log unavailable";
   }
@@ -11211,7 +11238,7 @@ async function useCharacterItem(sourceId, itemId, targetId, partName, attribute 
   await Promise.all([.../* @__PURE__ */ new Set([sourceId, targetId])].map(ensureOverlayForToken));
   scheduleRender();
   if (result.mode !== "none") try {
-    await pushDebugEntry(actorName + " uses " + result.itemName, result.summary, result.success ? "success" : "error");
+    await pushDebugEntry(actorName + " uses " + result.itemName, itemUseBody(actorName, result), result.success ? "success" : "error");
   } catch (error) {
     console.warn("[Avallon] Item use was saved; public log failed", error);
     result.summary += " \xB7 Public log unavailable; result saved on character.";
@@ -11924,7 +11951,7 @@ lib_default.onReady(async () => {
     new MutationObserver(() => paintAbilityAttackFields()).observe(ui.selectedTokenPanel, { childList: true, subtree: true });
     installStatusTools({ getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, update: updateTrackerData2, status: setStatus, render: scheduleRender });
     installArtifactTools({ useAbility: useItemAbility, prepareAbility: prepareItemAbilityAttack, getToken: (id) => getCharacterById(id ?? activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, update: updateTrackerData2, render: scheduleRender, status: setStatus });
-    installMagicTools({ useNarrative: (id, abilityId) => useNarrativeStatus(id, "", abilityId), getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
+    installMagicTools({ useAbility: useCharacterAbility, useNarrative: (id, abilityId) => useNarrativeStatus(id, "", abilityId), getToken: () => getCharacterById(activeTokenId), getRole: () => playerRole, canControl: canUseToken, tracker: getTrackerData, effective: getAvallonData2, update: updateTrackerData2, render: scheduleRender, status: setStatus, log: pushDebugEntry, prepare: (id, key) => {
       const t = getCharacterById(id), w = getWeaponByName(t, key);
       syncAttackWeaponInputs(id, key, w.damage, w.accuracy);
       scheduleRender();
