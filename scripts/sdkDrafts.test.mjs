@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {produceWithPatches,enablePatches} from 'immer';
+import {rulesContext} from './rulesContext.mjs';
+import {activateImplantAbility} from '../implantAbilities.js';
+import {applyNarrativeAbility} from '../narrativeUse.js';
+enablePatches();
+const {sanitize,getTrackerData,META_KEY}=rulesContext(),data=sanitize({});data.avallon.attributes.Magic=3;data.avallon.inventory.items=[{id:'glasses',name:'Glasses',kind:'artifact',quantity:1,equippedPart:'artifact',chargeMax:10,charges:10,abilities:[{id:'detect',name:'Detect magic',kind:'check',cost:.5,level:2},{id:'cocoon',name:'Air cocoon',kind:'utility',cost:1,statusName:'Air cocoon',statusDescription:'Narrative reminder only.'}]}];
+const token=id=>({id,metadata:{[META_KEY]:structuredClone(data)}}),initial=[token('source'),token('target')];
+let drafts=0;const [checked]=produceWithPatches(initial,items=>{assert.throws(()=>structuredClone(items[0].metadata[META_KEY]),/could not be cloned/);const tracker=getTrackerData(items[0]);assert.doesNotThrow(()=>structuredClone(tracker));drafts++;activateImplantAbility(tracker,'glasses','detect',{rollSkill:()=>({baseSkill:2,modifier:0,totalPrimary:31,totalSecondary:91,outcome:'failure'})});items[0].metadata[META_KEY]=sanitize(tracker);});
+assert.equal(checked[0].metadata[META_KEY].avallon.inventory.items[0].charges,9.5);assert.equal(initial[0].metadata[META_KEY].avallon.inventory.items[0].charges,10);
+const [narrative]=produceWithPatches(checked,items=>{const source=getTrackerData(items[0]),target=getTrackerData(items[1]),result=applyNarrativeAbility({source,target,itemId:'glasses',abilityId:'cocoon',sourceTokenId:'source',sourceName:'Mage',statusId:'cocoon-status'});items[0].metadata[META_KEY]=sanitize(result.source);items[1].metadata[META_KEY]=sanitize(result.target);});
+assert.equal(narrative[0].metadata[META_KEY].avallon.inventory.items[0].charges,8.5);assert.equal(narrative[1].metadata[META_KEY].avallon.statuses[0].name,'Air cocoon');assert.equal(drafts,1);
+const legacy=token('legacy');legacy.metadata[META_KEY].avallon.inventory.items[0]={id:'legacy-artifact',name:'Legacy relic',kind:'artifact',quantity:1,equippedPart:'artifact',chargeMax:10,charges:7.5,artifactEffect:'bonus',chargeCost:.5,activeBonuses:{attributes:{Strength:1}},abilities:[]};produceWithPatches([legacy],items=>{const tracker=getTrackerData(items[0]);assert.doesNotThrow(()=>structuredClone(tracker));assert.equal(tracker.avallon.inventory.items[0].abilities[0].cost,.5);items[0].metadata[META_KEY]=tracker;});
+console.log('Real SDK Immer drafts passed: plain normalization, charged checks, cross-token statuses and legacy artifact migration.');

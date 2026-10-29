@@ -526,7 +526,7 @@ function normalizeArtifact(raw = {}) {
   return { chargeMax, charges: half2(raw.charges ?? chargeMax, chargeMax), artifactEffect: "property" };
 }
 function artifactAbilities(raw = {}) {
-  const rows2 = structuredClone(Array.isArray(raw.abilities) ? raw.abilities : []);
+  const rows2 = Array.isArray(raw.abilities) ? Array.from(raw.abilities) : [];
   if (["mana", "heal", "bonus"].includes(raw.artifactEffect)) {
     let id = "artifact-default";
     while (rows2.some((a) => a.id === id)) id += "-legacy";
