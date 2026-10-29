@@ -1318,3 +1318,8 @@ select {
 .od-narrative-fields>summary{cursor:pointer;color:var(--muted);}
 .od-narrative-fields label{margin-top:8px;}
 .od-narrative-fields textarea{min-height:64px;}
+.od-ability-caption{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.od-ability-level{display:inline-block;font-size:10px;color:var(--muted);white-space:nowrap;margin-left:7px;}
+.od-ability-resources{display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:0 0 auto;}
+.od-ability-resources .cp-pill{white-space:nowrap;margin:0;}
+.od-ability-resources>[data-ability-cost]{font-size:10px;white-space:nowrap;color:var(--muted);}
