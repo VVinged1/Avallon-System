@@ -9,11 +9,11 @@ const state={role:'GM',id:'owner',name:'Alex',color:'#54aaff',selection:['hero']
 state.items[1].metadata[metadataKey].avallon.owner={playerId:'other',playerName:'Other'};
 const emit=(callbacks,value)=>callbacks.forEach(fn=>fn(structuredClone(value)));
 const subscribe=list=>fn=>{list.push(fn);return()=>list.splice(list.indexOf(fn),1);};
-state.contextMenus={};state.broadcasts=[];state.broadcastCallbacks=[];
+state.notifications=[];state.contextMenus={};state.broadcasts=[];state.broadcastCallbacks=[];
 const noop=async()=>{};
 const player=()=>({role:state.role,id:state.id,name:state.name,color:state.color,selection:state.selection});
 function collection(key,callbacks){return {getItems:async()=>structuredClone(state[key]),onChange:subscribe(callbacks),getItemBounds:async ids=>{const point=state[key].find(i=>ids.includes(i.id))?.position||{x:100,y:100};return {width:100,height:100,center:point,min:{x:point.x-50,y:point.y-50},max:{x:point.x+50,y:point.y+50}};},updateItems:async(ids,updater)=>{const previous=state[key].filter(i=>ids.includes(i.id)),[items]=produceWithPatches(previous,updater);const updates=new Map(items.map(i=>[i.id,i]));state[key]=state[key].map(i=>updates.get(i.id)||i);state.writes++;if(key==='items'&&state.afterItemWrite)await state.afterItemWrite(structuredClone(items));queueMicrotask(()=>emit(callbacks,state[key]));},addItems:async items=>{state[key].push(...structuredClone(items));queueMicrotask(()=>emit(callbacks,state[key]));},deleteItems:async ids=>{state[key]=state[key].filter(i=>!ids.includes(i.id));queueMicrotask(()=>emit(callbacks,state[key]));}};}
-const OBR={isReady:true,isAvailable:true,onReady:fn=>{setTimeout(fn,0);return()=>{};},
+const OBR={notification:{show:async(message,variant)=>{state.notifications.push({message,variant});return String(state.notifications.length);},close:noop},isReady:true,isAvailable:true,onReady:fn=>{setTimeout(fn,0);return()=>{};},
  player:{getRole:async()=>state.role,getId:async()=>state.id,getName:async()=>state.name,getColor:async()=>state.color,getSelection:async()=>state.selection,onChange:subscribe(state.playerCallbacks),select:async ids=>{state.selection=ids;emit(state.playerCallbacks,player());}},
  party:{getPlayers:async()=>[{id:'owner',name:'Alex'},{id:'other',name:'Other'}],onChange:()=>()=>{}},
  room:{id:'room',getMetadata:async()=>state.room,setMetadata:async patch=>{const next={...state.room,...patch};if(new TextEncoder().encode(JSON.stringify(next)).length>=16384)throw Error('Room metadata exceeds 16 KB.');Object.assign(state.room,patch);emit(state.roomCallbacks,state.room);},onMetadataChange:subscribe(state.roomCallbacks)},
