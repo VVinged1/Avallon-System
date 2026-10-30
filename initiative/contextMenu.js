@@ -1,4 +1,5 @@
 export const INITIATIVE_KEY='com.avallon.initiative/metadata';
+export const initiativeIconUrls=pageUrl=>({add:new URL('../add.svg',pageUrl).href,remove:new URL('../remove.svg',pageUrl).href});
 const token=item=>item?.type==='IMAGE'&&['CHARACTER','MOUNT'].includes(item.layer);
 export async function changeInitiativeMembership(sdk,items,add){
  if(await sdk.player.getRole()!=='GM')throw Error('Only the GM can change Avallon initiative.');

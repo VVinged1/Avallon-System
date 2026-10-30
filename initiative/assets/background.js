@@ -3533,14 +3533,9 @@ var OBR = {
 };
 var lib_default = OBR;
 
-// initiative/src/assets/add.svg
-var add_default = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" height="24" width="24"><path d="M9 11q-.425 0-.712-.288Q8 10.425 8 10t.288-.713Q8.575 9 9 9h6q.425 0 .713.287Q16 9.575 16 10t-.287.712Q15.425 11 15 11Zm0 3q-.425 0-.712-.288Q8 13.425 8 13t.288-.713Q8.575 12 9 12h6q.425 0 .713.287.287.288.287.713t-.287.712Q15.425 14 15 14Zm0 3q-.425 0-.712-.288Q8 16.425 8 16t.288-.713Q8.575 15 9 15h6q.425 0 .713.287.287.288.287.713t-.287.712Q15.425 17 15 17Zm9-8q-.425 0-.712-.288Q17 8.425 17 8V7h-1q-.425 0-.712-.287Q15 6.425 15 6t.288-.713Q15.575 5 16 5h1V4q0-.425.288-.713Q17.575 3 18 3t.712.287Q19 3.575 19 4v1h1q.425 0 .712.287Q21 5.575 21 6t-.288.713Q20.425 7 20 7h-1v1q0 .425-.288.712Q18.425 9 18 9ZM5 21q-.825 0-1.413-.587Q3 19.825 3 19V5q0-.825.587-1.413Q4.175 3 5 3h8q.425 0 .713.287Q14 3.575 14 4t-.287.712Q13.425 5 13 5H5v14h14v-8q0-.425.288-.713Q19.575 10 20 10t.712.287Q21 10.575 21 11v8q0 .825-.587 1.413Q19.825 21 19 21Z"/></svg>';
-
-// initiative/src/assets/remove.svg
-var remove_default = 'data:image/svg+xml,<svg width="24" height="24" xmlns="http://www.w3.org/2000/svg"><defs><clipPath id="a"><path d="M10 0a.97.97 0 0 1 .713.287A.97.97 0 0 1 11 1c0 .283-.096.52-.287.712A.968.968 0 0 1 10 2H2v14h14V8c0-.283.096-.521.288-.713A.967.967 0 0 1 17 7c.283 0 .52.096.712.287.192.192.288.43.288.713v8c0 .55-.196 1.021-.587 1.413A1.928 1.928 0 0 1 16 18H2c-.55 0-1.021-.196-1.413-.587A1.928 1.928 0 0 1 0 16V2C0 1.45.196.979.587.587A1.928 1.928 0 0 1 2 0h8Zm2 12a.97.97 0 0 1 .713.287A.97.97 0 0 1 13 13c0 .283-.096.52-.287.712A.968.968 0 0 1 12 14H6a.965.965 0 0 1-.712-.288A.965.965 0 0 1 5 13c0-.283.096-.521.288-.713A.967.967 0 0 1 6 12h6Zm0-3a.97.97 0 0 1 .713.287A.97.97 0 0 1 13 10c0 .283-.096.52-.287.712A.968.968 0 0 1 12 11H6a.965.965 0 0 1-.712-.288A.965.965 0 0 1 5 10c0-.283.096-.521.288-.713A.967.967 0 0 1 6 9h6Zm0-3a.97.97 0 0 1 .713.287A.97.97 0 0 1 13 7c0 .283-.096.52-.287.712A.968.968 0 0 1 12 8H6a.965.965 0 0 1-.712-.288A.965.965 0 0 1 5 7c0-.283.096-.521.288-.713A.967.967 0 0 1 6 6h6ZM16.414.578c.271 0 .507.1.707.3.2.201.3.437.3.708 0 .271-.1.507-.3.707L16.414 3l.707.707c.2.2.3.436.3.707 0 .271-.1.507-.3.707-.2.2-.436.3-.707.3a.965.965 0 0 1-.707-.3L15 4.414l-.707.707c-.2.2-.436.3-.707.3a.968.968 0 0 1-.707-.3c-.2-.2-.3-.436-.3-.707 0-.271.1-.507.3-.707L13.586 3l-.707-.707c-.2-.2-.3-.436-.3-.708 0-.27.1-.506.3-.706.2-.2.435-.3.706-.3.272 0 .508.1.708.3l.707.707.707-.707c.2-.2.436-.3.707-.3Z"/></clipPath></defs><g clip-path="url(%23a)" transform="translate(3 3)"><path d="M0 0h18v18H0V0z"/></g></svg>';
-
 // initiative/contextMenu.js
 var INITIATIVE_KEY = "com.avallon.initiative/metadata";
+var initiativeIconUrls = (pageUrl) => ({ add: new URL("../add.svg", pageUrl).href, remove: new URL("../remove.svg", pageUrl).href });
 var token = (item) => item?.type === "IMAGE" && ["CHARACTER", "MOUNT"].includes(item.layer);
 async function changeInitiativeMembership(sdk, items, add) {
   if (await sdk.player.getRole() !== "GM") throw Error("Only the GM can change Avallon initiative.");
@@ -3587,7 +3582,7 @@ async function installInitiativeMenus(sdk, icons) {
 
 // initiative/background.js
 lib_default.onReady(() => {
-  void installInitiativeMenus(lib_default, { add: add_default, remove: remove_default }).catch((error) => {
+  void installInitiativeMenus(lib_default, initiativeIconUrls(window.location.href)).catch((error) => {
     console.error("[Avallon Initiative] Context menu registration failed", error);
     void lib_default.notification.show("Avallon Initiative \xB7 menu registration failed: " + error.message, "ERROR");
   });
