@@ -1,3 +1,4 @@
+import {useInitiativeSize} from './useInitiativeSize';
 import {createLogEntry,publishLogEntry} from '../../sharedLog.js';
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -15,8 +16,8 @@ import OBR, { Image, isImage, Item, Player } from "@owlbear-rodeo/sdk";
 
 import { InitiativeItem } from "./InitiativeItem";
 
-import addIcon from "./assets/add.svg";
-import removeIcon from "./assets/remove.svg";
+
+
 
 import { InitiativeListItem } from "./InitiativeListItem";
 import { getPluginId } from "./getPluginId";
@@ -57,6 +58,7 @@ function isMetadata(
 }
 
 export function InitiativeTracker() {
+  const {size,handle:resizeHandle}=useInitiativeSize();
   const [initiativeItems, setInitiativeItems] = useState<InitiativeItem[]>([]);
   const [role, setRole] = useState<"GM" | "PLAYER">("PLAYER");
   const [status, setStatus] = useState("Select character tokens and add them to initiative.");
@@ -78,6 +80,7 @@ export function InitiativeTracker() {
           if (isMetadata(metadata)) {
             initiativeItems.push({
               id: item.id,
+              imageUrl:item.image.url,
               count: metadata.count,
               name: item.text?.plainText || item.name,
               active: metadata.active,
@@ -91,59 +94,6 @@ export function InitiativeTracker() {
 
     OBR.scene.items.getItems().then(handleItemsChange);
     return OBR.scene.items.onChange(handleItemsChange);
-  }, []);
-
-  useEffect(() => {
-    OBR.contextMenu.create({
-      icons: [
-        {
-          icon: addIcon,
-          label: "Add to Initiative",
-          filter: {
-            every: [
-              { key: "layer", value: "CHARACTER", coordinator: "||" },
-              { key: "layer", value: "MOUNT" },
-              { key: "type", value: "IMAGE" },
-              { key: ["metadata", getPluginId("metadata")], value: undefined },
-            ],
-            permissions: ["UPDATE"],
-          },
-        },
-        {
-          icon: removeIcon,
-          label: "Remove from Initiative",
-          filter: {
-            every: [
-              { key: "layer", value: "CHARACTER", coordinator: "||" },
-              { key: "layer", value: "MOUNT" },
-              { key: "type", value: "IMAGE" },
-            ],
-            permissions: ["UPDATE"],
-          },
-        },
-      ],
-      id: getPluginId("menu/toggle"),
-      async onClick(context) {
-        if(await OBR.player.getRole()!=="GM")return;
-        OBR.scene.items.updateItems(context.items, (items) => {
-          // Check whether to add the items to initiative or remove them
-          const addToInitiative = items.every(
-            (item) => item.metadata[getPluginId("metadata")] === undefined
-          );
-          let count = 0;
-          for (let item of items) {
-            if (addToInitiative) {
-              item.metadata[getPluginId("metadata")] = {
-                count: "0",
-                active: false,
-              };
-            } else {
-              delete item.metadata[getPluginId("metadata")];
-            }
-          }
-        });
-      },
-    });
   }, []);
 
   const sortedInitiativeItems = useMemo(
@@ -301,19 +251,14 @@ export function InitiativeTracker() {
   const listRef=useRef<HTMLUListElement>(null);
   const activeId=initiativeItems.find(item=>item.active)?.id;
   const activePosition=sortedInitiativeItems.findIndex(item=>item.id===activeId);
-  useEffect(()=>{void OBR.viewport.getWidth().then(width=>OBR.action.setWidth(Math.min(760,Math.max(320,width-32)))).catch(()=>{});void OBR.action.setHeight(180);},[]);
+
   useEffect(()=>{listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});},[activeId,activePosition,role]);
 
   return (
-    <Stack height="100vh" sx={{overflow:"hidden",minWidth:0}}>
+    <Stack direction="row" height="100vh" sx={{overflow:"hidden",minWidth:0,alignItems:"center",'--initiative-avatar-size':Math.max(36,Math.min(120,size.height-64))+'px'}}>
       <InitiativeHeader
-        subtitle={
-          initiativeItems.length === 0
-            ? "Select tokens and use Add Selected or right-click Add to Initiative."
-            : status
-        }
         action={
-          <Stack direction="row" spacing={0.5}>
+          <Stack direction="column" spacing={0}>
             <Tooltip title={role === "GM" ? "Add Selected Tokens" : "GM only"}>
               <span>
                 <IconButton
@@ -353,8 +298,8 @@ export function InitiativeTracker() {
           </Stack>
         }
       />
-      <Box sx={{minHeight:0,overflow:"hidden"}}>
-        <List ref={listRef} onWheel={event=>{if(Math.abs(event.deltaY)>Math.abs(event.deltaX))event.currentTarget.scrollLeft+=event.deltaY;}} className="initiative-strip" aria-label="Initiative order" sx={{display:"flex",flexWrap:"nowrap",gap:1,p:1,overflowX:"auto",overflowY:"hidden",minHeight:88}}>
+      <Box sx={{minHeight:0,minWidth:0,flex:1,overflow:"hidden"}}>
+        <List ref={listRef} onWheel={event=>{if(Math.abs(event.deltaY)>Math.abs(event.deltaX))event.currentTarget.scrollLeft+=event.deltaY;}} className="initiative-strip" aria-label="Initiative order" sx={{display:"flex",flexWrap:"nowrap",gap:.75,p:.5,alignItems:"center",overflowX:"auto",overflowY:"hidden",minHeight:88}}>
           {sortedInitiativeItems.map((initiative) => (
               <InitiativeListItem
                 key={initiative.id}
@@ -368,6 +313,7 @@ export function InitiativeTracker() {
             ))}
         </List>
       </Box>
+      <span className="initiative-sr-only" role="status">{status}</span>{resizeHandle}
     </Stack>
   );
 }

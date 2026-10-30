@@ -27,3 +27,5 @@ await build({ ...shared, entryPoints:["gm-extension/main.js"], outfile:"gm-exten
 await build({ ...shared, entryPoints:["room-log/main.js"], outfile:"room-log/assets/main.js" });
 
 await build({...shared,entryPoints:['initiative/src/main.tsx'],outfile:'initiative/assets/main.js',minify:true,define:{'process.env.NODE_ENV':'"production"'},jsx:'automatic',loader:{'.svg':'dataurl','.png':'dataurl'},alias:{'@mui/material':'./node_modules/@mui/material/esm','@mui/icons-material':'./node_modules/@mui/icons-material/esm'}});
+
+await build({...shared,entryPoints:['initiative/background.js'],outfile:'initiative/assets/background.js',loader:{'.svg':'dataurl'}});

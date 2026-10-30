@@ -1,3 +1,4 @@
+import {playerBodyPartsView} from './ui/playerBodyParts.js';
 import {createLogEntry,publishLogEntry,persistLogEntries} from './sharedLog.js';
 import {applyNarrativeAbility} from './narrativeUse.js';
 import {statusView,installStatusTools} from './ui/statusTools.js';
@@ -3333,7 +3334,7 @@ function renderSelectedToken() {
   const tokenLocked = !canUseToken(token);
   const bodyFieldDisabled = !canEditTokenData(token) ? "disabled" : "";
   const gmOnlyDisabled = !isEditable() ? "disabled" : "";
-  const showPartBlock = isEditable();
+  const showPartBlock = isEditable() || Boolean(playerId&&data.avallon.owner.playerId===playerId);
   const lastRollText = data.lastRoll
     ? escapeHtml(data.lastRoll.summary || "Last roll recorded")
     : "No rolls synced yet";
@@ -3405,7 +3406,7 @@ function renderSelectedToken() {
       }
       ${
         showPartBlock
-          ? renderCollapsibleSection(
+          ? isEditable() ? renderCollapsibleSection(
               "Body Parts",
               `
                 <div class="row row-gap">
@@ -3443,6 +3444,7 @@ function renderSelectedToken() {
               `,
               true,
             )
+          : renderCollapsibleSection("Body Parts",playerBodyPartsView(data,[SPECIAL_PART_NAME,...getBodyPartNames(data)]),true)
           : ""
       }
       ${

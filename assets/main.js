@@ -393,57 +393,6 @@ var require_events = __commonJS({
   }
 });
 
-// sharedLog.js
-var LOG_KEY = "com.avallon.system/debugLog";
-var LOG_CHANNEL = "com.avallon.system/debug";
-var queues = /* @__PURE__ */ new WeakMap();
-var lastId = 0;
-function createLogEntry(title, body, kind = "info") {
-  lastId = Math.max(Date.now() * 1e3, lastId + 1);
-  return { id: lastId, title, body, kind, timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString() };
-}
-function persistLogEntries(sdk, entries) {
-  const task = (queues.get(sdk) || Promise.resolve()).catch(() => {
-  }).then(async () => {
-    const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
-    for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
-    const rows2 = [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50), size = () => new TextEncoder().encode(JSON.stringify({ ...metadata, [LOG_KEY]: rows2 })).length;
-    while (rows2.length > 1 && size() > 16e3) rows2.pop();
-    if (size() > 16e3) throw Error("Not enough room metadata space for this log entry.");
-    await sdk.room.setMetadata({ [LOG_KEY]: rows2 });
-  });
-  queues.set(sdk, task);
-  return task;
-}
-async function publishLogEntry(sdk, entry, isGm) {
-  const tasks = [sdk.broadcast.sendMessage(LOG_CHANNEL, { type: "debug-entry", entry }, { destination: "ALL" })];
-  if (isGm) tasks.push(persistLogEntries(sdk, [entry]));
-  const results = await Promise.allSettled(tasks);
-  if (results.every((result) => result.status === "rejected")) throw results[0].reason;
-}
-
-// statusRules.js
-var text = (value, max) => String(value ?? "").trim().slice(0, max);
-var statusDefinition = (ability) => ({ statusName: text(ability?.statusName, 80), statusDescription: text(ability?.statusDescription, 2e3) });
-function normalizeStatuses(raw) {
-  const seen = /* @__PURE__ */ new Set();
-  return (Array.isArray(raw) ? raw : []).slice(0, 50).filter((s) => s && typeof s.id === "string").map((s) => ({ id: text(s.id, 120), name: text(s.name, 80), description: text(s.description, 2e3), sourceName: text(s.sourceName, 120), sourceKey: text(s.sourceKey, 400) })).filter((s) => s.id && s.name && !seen.has(s.id) && seen.add(s.id));
-}
-function addNarrativeStatus(tracker, status) {
-  var _a;
-  const clean = normalizeStatuses([status])[0];
-  if (!clean?.id || !clean.name) throw Error("Enter a status name.");
-  (_a = tracker.avallon).statuses ?? (_a.statuses = []);
-  const current2 = clean.sourceKey && tracker.avallon.statuses.find((s) => s.sourceKey === clean.sourceKey);
-  if (current2) {
-    Object.assign(current2, { ...clean, id: current2.id });
-    return current2;
-  }
-  if (tracker.avallon.statuses.length >= 50) throw Error("This character has 50 statuses. Ask the GM to remove unused statuses.");
-  tracker.avallon.statuses.push(clean);
-  return clean;
-}
-
 // avallonConfig.js
 var SKILL_CATEGORIES = [["combat", "Combat"], ["applied", "Applied"], ["survival", "Survival"], ["control", "Control"], ["social", "Social"], ["passive", "Passive"], ["abilities", "Abilities"], ["spells", "Spells"]];
 var skillCap = () => 10;
@@ -743,6 +692,70 @@ function useItemOnTracker(target, item, partName, effectId) {
   throw new Error("This item cannot be used.");
 }
 
+// ui/playerBodyParts.js
+var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function playerBodyPartsView(data, names2) {
+  const parts = names2.filter((key) => {
+    const p = data.body[key];
+    return p && !p.hidden && (key !== "Special" || p.max > 0 || p.current > 0 || p.minor || p.serious);
+  });
+  return '<div class="body-table-wrap" data-player-body-parts><table class="body-table od-body-readonly"><thead><tr><th>Part</th><th>HP</th><th>Armor</th><th>M / S / C</th></tr></thead><tbody>' + parts.map((key) => {
+    const p = data.body[key], w = partWounds(data, key);
+    return '<tr data-body-part="' + esc(key) + '"><td>' + esc(p.label || key) + "</td><td>" + p.current + " / " + p.max + "</td><td>" + p.armor + "</td><td>" + w.minor + " / " + w.serious + " / " + w.critical + "</td></tr>";
+  }).join("") + "</tbody></table></div>";
+}
+
+// sharedLog.js
+var LOG_KEY = "com.avallon.system/debugLog";
+var LOG_CHANNEL = "com.avallon.system/debug";
+var queues = /* @__PURE__ */ new WeakMap();
+var lastId = 0;
+function createLogEntry(title, body, kind = "info") {
+  lastId = Math.max(Date.now() * 1e3, lastId + 1);
+  return { id: lastId, title, body, kind, timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString() };
+}
+function persistLogEntries(sdk, entries) {
+  const task = (queues.get(sdk) || Promise.resolve()).catch(() => {
+  }).then(async () => {
+    const metadata = await sdk.room.getMetadata(), merged = /* @__PURE__ */ new Map();
+    for (const entry of [...Array.isArray(metadata?.[LOG_KEY]) ? metadata[LOG_KEY] : [], ...entries]) if (entry && Number.isFinite(entry.id)) merged.set(entry.id, entry);
+    const rows2 = [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 50), size = () => new TextEncoder().encode(JSON.stringify({ ...metadata, [LOG_KEY]: rows2 })).length;
+    while (rows2.length > 1 && size() > 16e3) rows2.pop();
+    if (size() > 16e3) throw Error("Not enough room metadata space for this log entry.");
+    await sdk.room.setMetadata({ [LOG_KEY]: rows2 });
+  });
+  queues.set(sdk, task);
+  return task;
+}
+async function publishLogEntry(sdk, entry, isGm) {
+  const tasks = [sdk.broadcast.sendMessage(LOG_CHANNEL, { type: "debug-entry", entry }, { destination: "ALL" })];
+  if (isGm) tasks.push(persistLogEntries(sdk, [entry]));
+  const results = await Promise.allSettled(tasks);
+  if (results.every((result) => result.status === "rejected")) throw results[0].reason;
+}
+
+// statusRules.js
+var text = (value, max) => String(value ?? "").trim().slice(0, max);
+var statusDefinition = (ability) => ({ statusName: text(ability?.statusName, 80), statusDescription: text(ability?.statusDescription, 2e3) });
+function normalizeStatuses(raw) {
+  const seen = /* @__PURE__ */ new Set();
+  return (Array.isArray(raw) ? raw : []).slice(0, 50).filter((s) => s && typeof s.id === "string").map((s) => ({ id: text(s.id, 120), name: text(s.name, 80), description: text(s.description, 2e3), sourceName: text(s.sourceName, 120), sourceKey: text(s.sourceKey, 400) })).filter((s) => s.id && s.name && !seen.has(s.id) && seen.add(s.id));
+}
+function addNarrativeStatus(tracker, status) {
+  var _a;
+  const clean = normalizeStatuses([status])[0];
+  if (!clean?.id || !clean.name) throw Error("Enter a status name.");
+  (_a = tracker.avallon).statuses ?? (_a.statuses = []);
+  const current2 = clean.sourceKey && tracker.avallon.statuses.find((s) => s.sourceKey === clean.sourceKey);
+  if (current2) {
+    Object.assign(current2, { ...clean, id: current2.id });
+    return current2;
+  }
+  if (tracker.avallon.statuses.length >= 50) throw Error("This character has 50 statuses. Ask the GM to remove unused statuses.");
+  tracker.avallon.statuses.push(clean);
+  return clean;
+}
+
 // magicRules.js
 var half = (v) => Math.round(Math.max(0, Math.min(999, Number(v) || 0)) * 2) / 2;
 var normalizeMana = (raw) => ({ spent: half(raw?.spent) });
@@ -883,13 +896,13 @@ function manaRow(o, gm) {
 function abilityRows(o, gm) {
   const pool = manaStatus(o), rows2 = o.abilities || [];
   if (!rows2.length) return "";
-  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card od-ability-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + '><span class="od-ability-caption"><span><b>' + esc(a.name) + '</b><small class="od-ability-level">Lvl ' + a.level + '</small></span><small class="cp-muted">' + esc(a.kind) + (a.kind === "attack" ? " \xB7 DMG " + a.damage : "") + '</small></span><span class="od-ability-resources"><span class="cp-pill" data-ability-pool>Mana ' + pool.current + "/" + pool.max + "</span><small data-ability-cost>Cost " + a.cost + " mana</small></span></button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
+  return '<div class="cp-section-title">Abilities</div><div class="cp-list">' + rows2.map((a) => '<article class="cp-skill-wrap"><div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card od-ability-card" data-magic-action="' + (a.kind === "attack" ? "prepare" : "use") + '" data-id="' + esc2(a.id) + '" ' + (pool.current < a.cost ? "disabled" : "") + '><span class="od-ability-caption"><span><b>' + esc2(a.name) + '</b><small class="od-ability-level">Lvl ' + a.level + '</small></span><small class="cp-muted">' + esc2(a.kind) + (a.kind === "attack" ? " \xB7 DMG " + a.damage : "") + '</small></span><span class="od-ability-resources"><span class="cp-pill" data-ability-pool>Mana ' + pool.current + "/" + pool.max + "</span><small data-ability-cost>Cost " + a.cost + " mana</small></span></button>" + descriptionButton(a.name, a.description) + (gm ? '<button type="button" class="cp-pencil" data-magic-action="edit" data-id="' + esc2(a.id) + '" title="Edit ability">\u270E</button>' : "") + "</div></article>").join("") + "</div>";
 }
 function abilityEditor(existing = {}, skills = []) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
-  const input = (name, label, value = "", type = "text") => "<label>" + esc(label) + '<input name="' + name + '" type="' + type + '" value="' + esc(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
-  dialog.innerHTML = "<form><h2>" + esc(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="10" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Narrative ability</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><fieldset data-status-fields><legend>Narrative status \xB7 optional</legend><label>Status name<input name="statusName" maxlength="80" value="' + esc(existing.statusName || "") + '"></label><label>Status description<textarea name="statusDescription" maxlength="2000">' + esc(existing.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target when used. This is a reminder without automatic combat effects.</p></fieldset><label>Description<textarea name="description" maxlength="2000">' + esc(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
+  const input = (name, label, value = "", type = "text") => "<label>" + esc2(label) + '<input name="' + name + '" type="' + type + '" value="' + esc2(value) + '" ' + (type === "number" ? 'min="-999" max="999" step="1"' : 'maxlength="120"') + "></label>";
+  dialog.innerHTML = "<form><h2>" + esc2(existing.id ? "Edit ability" : "New ability") + "</h2>" + input("name", "Name", existing.name || "") + '<label>Skill level<input name="level" type="number" min="0" max="10" step="1" value="' + (existing.level || 0) + '"></label><label>Type<select name="kind"><option value="utility">Narrative ability</option><option value="bonus">Activate bonuses</option><option value="attack">Attack</option></select></label><label>Mana cost<input name="cost" type="number" min="0" max="999" step="0.5" value="' + (existing.cost || 0) + '"></label><div data-attack-fields>' + input("damage", "Damage", existing.damage || 0, "number") + input("accuracy", "Accuracy", existing.accuracy || 0, "number") + '</div><fieldset data-bonus-fields><legend>Bonuses</legend><div class="od-bonuses">' + ATTRIBUTES.map((k) => input("attr:" + k, k, existing.bonuses?.attributes?.[k] || 0, "number")).join("") + "</div>" + skills.map(([key, label]) => input("skill:" + key, label + " \xB7 level bonus", existing.bonuses?.skills?.[key] || existing.bonuses?.skills?.[label] || 0, "number")).join("") + '</fieldset><fieldset data-status-fields><legend>Narrative status \xB7 optional</legend><label>Status name<input name="statusName" maxlength="80" value="' + esc2(existing.statusName || "") + '"></label><label>Status description<textarea name="statusDescription" maxlength="2000">' + esc2(existing.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target when used. This is a reminder without automatic combat effects.</p></fieldset><label>Description<textarea name="description" maxlength="2000">' + esc2(existing.description || "") + '</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button>' + (existing.id ? '<button type="button" data-delete class="danger">Delete ability</button>' : "") + '<button type="submit">Save</button></div></form>';
   const form = dialog.querySelector("form");
   form.elements.kind.value = existing.kind || "utility";
   const toggle = () => {
@@ -1052,64 +1065,64 @@ function mergeInventoryStacks(items, preferredId = "", skillLabels = {}) {
 }
 
 // ui/characterView.js
-var esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var esc2 = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var bonusText = (b) => [...Object.entries(b?.attributes || {}), ...Object.entries(b?.skills || {}), ...RANGE_BANDS.filter(([key]) => b?.rangeReduction?.[key]).map(([key, label]) => [label.split(" \xB7 ")[0] + " relief", b.rangeReduction[key]])].map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" \xB7 ");
 function attributeCards(o, fields, editable) {
   return `<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="attribute" aria-label="Characteristic roll modifier"></label></div><div class="cp-attrs">${fields.map(([k, label]) => {
     const delta = o.modifiers?.attributes?.[k] || 0;
-    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc(k)}" aria-label="Roll ${esc(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="${attributeCap(k)}" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc(k)}" aria-label="Edit ${esc(label)}"></label>` : ""}</div>`;
+    return `<div class="cp-attr-wrap"><button type="button" class="cp-attr" data-action="profile-roll-char" data-attribute="${esc2(k)}" aria-label="Roll ${esc2(label)}"><span class="cp-attr-val">${o.attributes[k] ?? 0}</span><span class="cp-attr-code">${esc2(label)}</span>${delta ? `<span class="cp-mod ${delta > 0 ? "good" : "bad"}">${delta > 0 ? "+" : ""}${delta}</span>` : ""}</button>${editable ? `<label class="cp-edit-value">Base <input type="number" min="0" max="${attributeCap(k)}" value="${o.baseAttributes?.[k] ?? o.attributes[k] ?? 0}" data-action="set-avallon-attribute" data-attribute="${esc2(k)}" aria-label="Edit ${esc2(label)}"></label>` : ""}</div>`;
   }).join("")}</div></div>`;
 }
 function skillCards(o, groups, editable) {
   const passives = Object.entries(ARMOR_TRAINING).filter(([k]) => Object.hasOwn(o.skills, k) && (editable || o.skills[k] === 1));
   const skillRow = ([k, value]) => {
     const name = o.skillLabels[k] || k, perks = o.skillPerks[k] || [], mod = o.modifiers?.skills?.[k] || 0;
-    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
-    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc(k) + '" aria-label="Roll ' + esc(name) + '"><span><b>' + esc(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc(k) + '" aria-label="Edit ' + esc(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
+    const relief = RANGE_BANDS.filter(([band]) => o.skillRangeReduction?.[k]?.[band]).map(([band, label]) => '<span class="cp-pill">' + esc2(label.split(" \xB7 ")[0]) + " relief " + o.skillRangeReduction[k][band] + "</span>").join("");
+    return '<div class="cp-skill-wrap"><div class="cp-skill-row"><button class="cp-card cp-skill-card" type="button" data-action="profile-roll-skill" data-skill="' + esc2(k) + '" aria-label="Roll ' + esc2(name) + '"><span><b>' + esc2(name) + "</b>" + (o.skillStrengthBonuses[k] ? '<span class="cp-pill">STR</span>' : "") + relief + '</span><span class="cp-skill-level"><span class="cp-pips">' + Array.from({ length: skillCap(o.skillCategories[k]) }, (_, i) => '<i class="cp-pip ' + (i < value ? "on" : "") + '"></i>').join("") + "</span><strong>" + value + "/" + skillCap(o.skillCategories[k]) + "</strong>" + (mod ? '<span class="cp-mod ' + (mod > 0 ? "good" : "bad") + '">' + (mod > 0 ? "+" : "") + mod + "</span>" : "") + "</span></button>" + descriptionButton(name, o.skillDescriptions?.[k]) + (editable && !o.grantedSkills?.[k] ? '<button type="button" class="cp-pencil" data-od-action="edit-skill" data-skill="' + esc2(k) + '" aria-label="Edit ' + esc2(name) + '">\u270E</button>' : "") + "</div>" + (perks.length ? '<div class="cp-perks cp-perk-descriptions">' + perks.map((p) => '<span class="cp-pill">' + esc2(p) + descriptionButton(p, o.skillPerkDescriptions?.[k]?.[p]) + "</span>").join("") + "</div>" : "") + "</div>";
   };
-  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + (editable ? '<button type="button" data-magic-action="add">+ Ability</button>' : "") + "</div>" + manaRow(o, editable) + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + abilityRows(o, editable) + prosthesisAbilityRows(o) + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
+  return '<div class="cp-screen"><div class="cp-row cp-roll-options"><label>Roll modifier <input type="number" value="0" data-profile-modifier="skill" aria-label="Skill roll modifier"></label><button type="button" class="secondary" data-action="profile-random-skill">d100 vs d100</button>' + (editable ? '<button type="button" class="secondary" data-od-action="add-skill">+ Skill</button>' : "") + (editable ? '<button type="button" data-magic-action="add">+ Ability</button>' : "") + "</div>" + manaRow(o, editable) + groups.filter(([, entries]) => entries.length).map(([label, entries]) => '<div class="cp-section-title">' + esc2(label) + '</div><div class="cp-list">' + entries.map(skillRow).join("") + "</div>").join("") + abilityRows(o, editable) + prosthesisAbilityRows(o) + (passives.length ? '<div class="cp-passives cp-row"><span class="cp-muted">Armor training</span>' + passives.map(([k, label]) => '<span class="cp-pill">' + esc2(label) + " " + o.skills[k] + "</span>").join("") + (editable ? '<button type="button" class="cp-pencil" data-od-action="edit-training" aria-label="Edit armor training">\u270E</button>' : "") + "</div>" : "") + "</div>";
 }
 function effectChips(o, gm) {
   const rows2 = o.effectRows || [];
-  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc(bonusText(e.bonuses))}"><b>${esc(e.name)}</b> ${esc(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc(e.id)}" aria-label="Remove ${esc(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
+  return `<div class="cp-row cp-effects">${rows2.map((e) => `<span class="cp-effect" title="${esc2(bonusText(e.bonuses))}"><b>${esc2(e.name)}</b> ${esc2(bonusText(e.bonuses))}${gm && !e.passive ? `<button type="button" data-od-action="remove-effect" data-id="${esc2(e.id)}" aria-label="Remove ${esc2(e.name)}">\xD7</button>` : ""}</span>`).join("")}${o.armorSummary?.total ? `<span class="cp-pill">${esc2(o.armorSummary.name)} \xB7 ${o.armorSummary.total} \xB7 ${o.armorSummary.trained ? "trained" : "untrained"}</span>` : ""}</div>`;
 }
 function inventoryView(tracker, gm) {
   const o = tracker.avallon, inv = o.inventory;
-  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc(id)}" aria-label="Remove item">\xD7</button>` : "";
+  const edit = (type, id) => gm ? `<button type="button" class="cp-pencil" data-od-action="edit-entry" data-entry-type="${type}" data-id="${esc2(id)}" aria-label="Edit item">\u270E</button><button type="button" class="danger cp-pencil" data-od-action="delete-entry" data-entry-type="${type}" data-id="${esc2(id)}" aria-label="Remove item">\xD7</button>` : "";
   const renderItem = (i) => {
     const equipment = ["armor", "shield", "prosthesis"].includes(i.kind), broken = i.kind !== "prosthesis" && i.criticalMax > 0 && i.criticalDamage >= i.criticalMax;
     const usable = ["consumable", "medical"].includes(i.kind), subtype = i.kind === "medical" ? "medkit" : i.subtype;
     let controls = "";
     if (i.kind === "artifact") {
-      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>";
+      controls = (i.artifactEffect === "property" && !(i.abilities || []).some((a) => a.kind && a.kind !== "skill") ? '<span class="cp-pill">Passive property</span>' : '<span class="cp-pill">Charges ' + i.charges + "/" + i.chargeMax + "</span>") + '<button type="button" data-artifact-action="' + (i.equippedPart ? "unequip" : "equip") + '" data-id="' + esc2(i.id) + '">' + (i.equippedPart ? "Unequip" : "Equip") + "</button>";
     } else if (equipment) {
-      const label = i.equippedPart ? '<span class="cp-muted">' + esc(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
+      const label = i.equippedPart ? '<span class="cp-muted">' + esc2(tracker.body[i.equippedPart]?.label || i.equippedPart) + "</span>" : "";
       if (!gm && i.kind === "prosthesis" && !i.playerRemovable) controls = label + '<span class="cp-pill">GM installation / removal only</span>';
-      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc(i.id) + '">Unequip</button>';
+      else if (i.equippedPart) controls = label + '<button type="button" data-od-action="unequip" data-id="' + esc2(i.id) + '">Unequip</button>';
       else {
         const options = Object.entries(tracker.body).filter(([key, p]) => (gm || !p.hidden) && equipmentFits(i, key, p) && (i.kind === "prosthesis" || !inv.items.some((other) => ["armor", "shield"].includes(other.kind) && other.equippedPart === key)));
-        controls = '<label>Slot <select data-equip-part="' + esc(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc(key) + '">' + esc(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
+        controls = '<label>Slot <select data-equip-part="' + esc2(i.id) + '">' + options.map(([key, p]) => '<option value="' + esc2(key) + '">' + esc2(p.label || key) + "</option>").join("") + '</select></label><button type="button" data-od-action="equip" data-id="' + esc2(i.id) + '" ' + (!i.quantity || !options.length ? "disabled" : "") + ">Equip</button>";
       }
-    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
-    return '<article class="cp-card"' + (i.kind === "artifact" ? ' data-artifact-open="' + esc(i.id) + '"' : "") + '><div class="cp-row">' + (i.kind === "artifact" ? '<button type="button" class="cp-item-open cp-skill-card" data-artifact-action="menu" data-id="' + esc(i.id) + '" aria-label="Open ' + esc(i.name) + ' actions"><b>' + esc(i.name) + "</b></button>" : "<b>" + esc(i.name) + "</b>") + '<span class="cp-pill">' + esc(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
+    } else if (usable) controls = '<button type="button" data-od-action="use-item" data-id="' + esc2(i.id) + '" ' + (!i.quantity || subtype === "grenade" ? "disabled" : "") + ">" + (subtype === "grenade" ? "Grenade \xB7 placeholder" : "Use\u2026") + "</button>";
+    return '<article class="cp-card"' + (i.kind === "artifact" ? ' data-artifact-open="' + esc2(i.id) + '"' : "") + '><div class="cp-row">' + (i.kind === "artifact" ? '<button type="button" class="cp-item-open cp-skill-card" data-artifact-action="menu" data-id="' + esc2(i.id) + '" aria-label="Open ' + esc2(i.name) + ' actions"><b>' + esc2(i.name) + "</b></button>" : "<b>" + esc2(i.name) + "</b>") + '<span class="cp-pill">' + esc2(usable ? subtype : i.kind) + '</span><span class="cp-pill">\xD7' + i.quantity + "</span>" + (i.armor ? '<span class="cp-pill">Armor ' + i.armor + "</span>" : "") + (i.kind === "prosthesis" && i.criticalMax ? '<span class="cp-pill">Body HP +' + i.criticalMax + "</span>" : i.criticalMax ? '<span class="cp-pill ' + (broken ? "bad" : "") + '">Durability ' + (i.criticalMax - i.criticalDamage) + "/" + i.criticalMax + "</span>" : "") + (usable && i.useSkill ? '<span class="cp-pill">Use: ' + esc2(i.useSkill) + "</span>" : "") + descriptionButton(i.name, i.description) + edit("item", i.id) + "</div>" + (bonusText(i.bonuses) ? '<p class="cp-muted">' + esc2(bonusText(i.bonuses)) + "</p>" : "") + '<div class="cp-row">' + controls + "</div></article>";
   };
   const equippedItems = inv.items.filter((i) => i.equippedPart).map(renderItem).join("");
-  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
-  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
+  const items = groupNamedItems(inv.items.filter((i) => !i.equippedPart)).map((rows2) => rows2.length === 1 ? renderItem(rows2[0]) : '<details class="cp-card od-named-group"><summary>' + esc2(rows2[0].name) + " \xB7 \xD7" + rows2.reduce((sum, i) => sum + i.quantity, 0) + " \xB7 " + rows2.length + " variants</summary>" + rows2.map(renderItem).join("") + "</details>").join("");
+  const ammo = o.ammunition.map((a) => `<article class="cp-card cp-row"><b>${esc2(a.name)}</b><span class="cp-pill">Ammo \xD7${a.quantity}</span><span class="cp-muted">DMG ${a.damage} \xB7 AP ${a.penetration}</span>${descriptionButton(a.name, a.description)}${edit("ammo", a.id)}</article>`).join("");
   const mags = "";
   const weapons = ["melee", "ranged"].flatMap((kind) => o.weapons[kind].map((w, index) => {
     let controls = "";
     if (gm && kind === "ranged") {
-      controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload</button></div>';
+      controls = '<div class="cp-row"><label>Ammo<select data-reload-kind="' + index + '">' + o.ammunition.filter((a) => w.ammoIds.includes(a.id)).map((a) => '<option value="' + esc2(a.id) + '" ' + (a.id === w.loadedAmmoId ? "selected" : "") + ">" + esc2(a.name) + " (" + a.quantity + ")</option>").join("") + '</select></label><button type="button" data-od-action="reload-weapon" data-index="' + index + '">Reload</button></div>';
     }
-    return '<article class="cp-card"><div class="cp-row"><b>' + esc(w.name) + '</b><span class="cp-pill">' + esc(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 Capacity " + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
+    return '<article class="cp-card"><div class="cp-row"><b>' + esc2(w.name) + '</b><span class="cp-pill">' + esc2(kind === "ranged" ? weaponCategoryLabel(w.weaponCategory) : kind) + '</span><span class="cp-muted">ACC ' + w.accuracy + (kind === "melee" ? " \xB7 DMG " + w.damage : " \xB7 Capacity " + w.loaded + "/" + w.capacity) + "</span>" + (Object.keys(w.rangeReduction || {}).length ? '<span class="cp-muted">' + esc2(bonusText({ rangeReduction: w.rangeReduction })) + "</span>" : "") + descriptionButton(w.name, w.description) + edit("weapon-" + kind, w.id || String(index)) + "</div>" + controls + "</article>";
   }));
   const group = (label, html) => html ? `<div class="cp-section-title">${label}</div><div class="cp-list">${html}</div>` : "";
   return `<div class="cp-screen">${gm ? '<div class="cp-row"><button type="button" data-od-action="add-item">+ Item</button><button type="button" data-od-action="open-item-pool">Campaign item pool</button></div>' : ""}${group("Equipped", equippedItems)}${group("Items", items)}${group("Weapons", weapons.join(""))}${group("Ammunition", ammo)}${!equippedItems && !items && !ammo && !mags && !weapons.length ? '<p class="cp-muted">Inventory is empty.</p>' : ""}</div>`;
 }
 function templatesView(library, gm) {
   if (!gm) return "";
-  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc(t.id)}">Duplicate</button><button type="button" class="secondary" data-od-action="export-template" data-id="${esc(t.id)}">Export this character JSON</button><button type="button" class="secondary" data-od-action="import-template" data-id="${esc(t.id)}">Import into this template</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
+  return `<div class="cp-screen cp-templates"><div class="cp-section-title">Character Templates</div><p class="cp-muted">Templates are saved in this browser. Export JSON for backup, or save a library scene to your Owlbear account. Account save opens the Assets folder picker; it creates a snapshot.</p><div class="cp-row"><button type="button" data-od-action="save-template">Save character as template</button><button type="button" data-od-action="export-library">Export JSON</button><button type="button" data-od-action="import-library">Import JSON</button><button type="button" data-od-action="account-save">Save to account</button><button type="button" data-od-action="account-load">Load from account</button></div><div class="cp-list">${library.templates.map((t) => `<article class="cp-card cp-row"><b>${esc2(t.name)}</b>${gm ? `<button type="button" data-od-action="apply-template" data-id="${esc2(t.id)}">Apply to token\u2026</button>` : ""}<button type="button" class="secondary" data-od-action="rename-template" data-id="${esc2(t.id)}">Rename</button><button type="button" class="secondary" data-od-action="duplicate-template" data-id="${esc2(t.id)}">Duplicate</button><button type="button" class="secondary" data-od-action="export-template" data-id="${esc2(t.id)}">Export this character JSON</button><button type="button" class="secondary" data-od-action="import-template" data-id="${esc2(t.id)}">Import into this template</button><button type="button" class="danger" data-od-action="delete-template" data-id="${esc2(t.id)}">Remove</button></article>`).join("") || '<p class="cp-muted">No templates saved.</p>'}</div></div>`;
 }
 function prosthesisAbilityRows(o) {
   const rows2 = activeImplantAbilities(o), mana = manaStatus(o);
@@ -1117,7 +1130,7 @@ function prosthesisAbilityRows(o) {
   return '<div class="cp-section-title">Item abilities</div>' + rows2.map(({ item, ability, key }) => {
     const artifact = item.kind === "artifact", currency = artifact ? "charges" : "mana", cost = ability.cost || 0, available = artifact ? item.charges : mana.current, max = artifact ? item.chargeMax : mana.max, active = ability.kind === "bonus" && (o.effects || []).some((e) => e.id === "implant-effect:" + item.id + ":" + ability.id);
     const action = ability.kind === "attack" ? "implant-attack" : "activate-implant";
-    return '<div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card od-ability-card" data-od-action="' + action + '" data-id="' + esc(item.id) + '" data-ability-id="' + esc(ability.id) + '" data-key="' + esc(key) + '" ' + (available < cost || active ? "disabled" : "") + '><span class="od-ability-caption"><span><b>' + esc(ability.name) + '</b><small class="od-ability-level">Lvl ' + (ability.level || 0) + '</small></span><small class="cp-muted">' + esc(item.name) + (ability.kind === "attack" ? " \xB7 DMG " + ability.damage : "") + (active ? " \xB7 active" : "") + '</small></span><span class="od-ability-resources"><span class="cp-pill" data-ability-pool>' + (artifact ? "Charges " : "Mana ") + available + "/" + max + "</span><small data-ability-cost>Cost " + cost + " " + currency + "</small></span></button>" + descriptionButton(ability.name, ability.description) + "</div>";
+    return '<div class="cp-skill-row"><button type="button" class="cp-card cp-skill-card od-ability-card" data-od-action="' + action + '" data-id="' + esc2(item.id) + '" data-ability-id="' + esc2(ability.id) + '" data-key="' + esc2(key) + '" ' + (available < cost || active ? "disabled" : "") + '><span class="od-ability-caption"><span><b>' + esc2(ability.name) + '</b><small class="od-ability-level">Lvl ' + (ability.level || 0) + '</small></span><small class="cp-muted">' + esc2(item.name) + (ability.kind === "attack" ? " \xB7 DMG " + ability.damage : "") + (active ? " \xB7 active" : "") + '</small></span><span class="od-ability-resources"><span class="cp-pill" data-ability-pool>' + (artifact ? "Charges " : "Mana ") + available + "/" + max + "</span><small data-ability-cost>Cost " + cost + " " + currency + "</small></span></button>" + descriptionButton(ability.name, ability.description) + "</div>";
   }).join("");
 }
 
@@ -1743,7 +1756,7 @@ function groupPoolEntries(entries) {
 function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImport, onRefresh, onAccountSave, onAccountLoad }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-pool-dialog";
-  dialog.innerHTML = '<div class="cp-row"><h2>Campaign item pool</h2><button type="button" data-pool-close aria-label="Close item pool">\xD7</button></div><p>Give reusable items to ' + esc(character) + '. The pool is shared in this scene and backed up in this browser for this room. Open the extension after changing scenes to restore the pool. Copied equipment is unequipped; ranged weapons are unloaded.</p><div class="cp-row"><input type="search" data-pool-search placeholder="Search items" aria-label="Search item pool"><button type="button" data-pool-refresh title="Refresh item pool" aria-label="Refresh item pool">\u21BB</button><button type="button" data-pool-export>Export item pool</button><button type="button" data-pool-import>Import item pool</button><button type="button" data-pool-account-save title="Save item pool to account" aria-label="Save item pool to account">Save to account</button><button type="button" data-pool-account-load title="Load item pool from account" aria-label="Load item pool from account">Load from account</button></div><div class="cp-row"><button type="button" data-pool-expand title="Expand categories" aria-label="Expand categories">\u25BE</button><button type="button" data-pool-collapse title="Collapse categories" aria-label="Collapse categories">\u25B8</button></div><p data-pool-warning class="cp-banner err" role="alert" hidden></p><p data-pool-status role="status"></p><div class="cp-list" data-pool-list></div>';
+  dialog.innerHTML = '<div class="cp-row"><h2>Campaign item pool</h2><button type="button" data-pool-close aria-label="Close item pool">\xD7</button></div><p>Give reusable items to ' + esc2(character) + '. The pool is shared in this scene and backed up in this browser for this room. Open the extension after changing scenes to restore the pool. Copied equipment is unequipped; ranged weapons are unloaded.</p><div class="cp-row"><input type="search" data-pool-search placeholder="Search items" aria-label="Search item pool"><button type="button" data-pool-refresh title="Refresh item pool" aria-label="Refresh item pool">\u21BB</button><button type="button" data-pool-export>Export item pool</button><button type="button" data-pool-import>Import item pool</button><button type="button" data-pool-account-save title="Save item pool to account" aria-label="Save item pool to account">Save to account</button><button type="button" data-pool-account-load title="Load item pool from account" aria-label="Load item pool from account">Load from account</button></div><div class="cp-row"><button type="button" data-pool-expand title="Expand categories" aria-label="Expand categories">\u25BE</button><button type="button" data-pool-collapse title="Collapse categories" aria-label="Collapse categories">\u25B8</button></div><p data-pool-warning class="cp-banner err" role="alert" hidden></p><p data-pool-status role="status"></p><div class="cp-list" data-pool-list></div>';
   document.body.append(dialog);
   let busy = false;
   const expanded = /* @__PURE__ */ new Map();
@@ -1757,9 +1770,9 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
     for (const details2 of list.querySelectorAll("details[data-pool-category]")) expanded.set(details2.dataset.poolCategory, details2.open);
     const row = (e) => {
       const b = e.blueprint, v = b.values;
-      return '<article class="cp-card cp-row"><b>' + esc(v.name) + '</b><span class="cp-pill">' + esc(v.kind) + '</span><span class="cp-muted">' + esc([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.kind === "artifact" && (v.artifactEffect !== "property" || (v.abilities || []).some((a) => a.kind && a.kind !== "skill")) ? "Charges " + v.chargeMax + " \xB7 cost " + v.chargeCost : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
+      return '<article class="cp-card cp-row"><b>' + esc2(v.name) + '</b><span class="cp-pill">' + esc2(v.kind) + '</span><span class="cp-muted">' + esc2([v.armor ? "Armor " + v.armor : "", v.criticalMax ? "HP " + v.criticalMax : "", v.capacity ? "Capacity " + v.capacity : "", v.kind === "artifact" && (v.artifactEffect !== "property" || (v.abilities || []).some((a) => a.kind && a.kind !== "skill")) ? "Charges " + v.chargeMax + " \xB7 cost " + v.chargeCost : "", v.damage ? "DMG " + v.damage : "", v.useSkill ? "Use: " + v.useSkill : ""].filter(Boolean).join(" \xB7 ")) + "</span>" + descriptionButton(v.name, v.description) + '<button type="button" data-pool-give="' + esc2(e.id) + '" ' + (busy ? "disabled" : "") + '>Give item</button><button type="button" data-pool-delete="' + esc2(e.id) + '" class="danger" aria-label="Remove definition from pool" ' + (busy ? "disabled" : "") + ">\xD7</button></article>";
     };
-    const rows2 = (entries) => groupNamedItems(entries, (e) => ({ ...e.blueprint.values, kind: e.blueprint.type === "item" ? e.blueprint.values.kind : e.id })).map((group) => group.length === 1 ? row(group[0]) : '<details class="cp-card od-named-group"><summary>' + esc(group[0].blueprint.values.name) + " \xB7 " + group.length + " variants</summary>" + group.map(row).join("") + "</details>").join("");
+    const rows2 = (entries) => groupNamedItems(entries, (e) => ({ ...e.blueprint.values, kind: e.blueprint.type === "item" ? e.blueprint.values.kind : e.id })).map((group) => group.length === 1 ? row(group[0]) : '<details class="cp-card od-named-group"><summary>' + esc2(group[0].blueprint.values.name) + " \xB7 " + group.length + " variants</summary>" + group.map(row).join("") + "</details>").join("");
     if (search) {
       const words = search.split(/\s+/);
       const matches = catalog.entries.filter((e) => {
@@ -1770,7 +1783,7 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
     } else {
       const group = (node, path = [], level = 0) => {
         const key = JSON.stringify([...path, node.label]), open = expanded.get(key) ?? level === 0;
-        return '<details class="od-pool-category" data-pool-category="' + esc(key) + '" ' + (open ? "open" : "") + "><summary>" + esc(node.label) + ' <span class="cp-pill">' + node.count + '</span></summary><div class="od-pool-category-body">' + rows2(node.entries) + node.children.map((child) => group(child, [...path, node.label], level + 1)).join("") + "</div></details>";
+        return '<details class="od-pool-category" data-pool-category="' + esc2(key) + '" ' + (open ? "open" : "") + "><summary>" + esc2(node.label) + ' <span class="cp-pill">' + node.count + '</span></summary><div class="od-pool-category-body">' + rows2(node.entries) + node.children.map((child) => group(child, [...path, node.label], level + 1)).join("") + "</div></details>";
       };
       list.innerHTML = groupPoolEntries(catalog.entries).map((node) => group(node)).join("") || '<p class="cp-muted">The campaign item pool is empty.</p>';
     }
@@ -1831,21 +1844,21 @@ function showItemPool({ getCatalog, character, onGive, onDelete, onExport, onImp
 }
 
 // ui/bonusEditor.js
-var esc2 = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var esc3 = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var find = (skills, name) => skills.find(([key, label]) => [key, label].some((v) => String(v).trim().toLocaleLowerCase() === String(name).trim().toLocaleLowerCase()));
 var names = (prefix) => prefix === "ability" ? ["abilityAttr:", "abilitySkill:", "abilityCategory:"] : prefix === "active" ? ["activeAttr:", "activeSkill:", "activeCategory:"] : ["attr:", "skill:", "skillCategory:"];
 function compactBonusEditor(value = {}, skills = [], { prefix = "", label = "Passive bonuses", allowSkills = true } = {}) {
-  return '<fieldset class="od-bonuses od-compact-bonuses" data-bonus-editor="' + esc2(prefix) + '" data-allow-skills="' + allowSkills + '"><legend>' + esc2(label) + "</legend>" + contents(value, skills, prefix, allowSkills) + "</fieldset>";
+  return '<fieldset class="od-bonuses od-compact-bonuses" data-bonus-editor="' + esc3(prefix) + '" data-allow-skills="' + allowSkills + '"><legend>' + esc3(label) + "</legend>" + contents(value, skills, prefix, allowSkills) + "</fieldset>";
 }
 function contents(value, skills, prefix, allowSkills) {
   const [attrName, skillName, categoryName] = names(prefix), b = normalizeBonuses(value);
   const rows2 = [...Object.entries(b.attributes).map(([key, v]) => ["attribute", key, v]), ...Object.entries(b.skills).map(([key, v]) => ["skill", key, v])];
   const assigned = new Set(rows2.map(([type, key]) => (type === "attribute" ? "a:" : "s:") + key));
-  const options = (type, entries) => entries.filter(([k]) => !assigned.has(type + ":" + k)).map(([k, label]) => '<option value="' + esc2(type + ":" + k) + '">' + esc2(label) + "</option>").join("");
-  const categories = SKILL_CATEGORIES.map(([k, label]) => '<option value="' + k + '" ' + (k === "applied" ? "selected" : "") + ">" + esc2(label) + "</option>").join("");
+  const options = (type, entries) => entries.filter(([k]) => !assigned.has(type + ":" + k)).map(([k, label]) => '<option value="' + esc3(type + ":" + k) + '">' + esc3(label) + "</option>").join("");
+  const categories = SKILL_CATEGORIES.map(([k, label]) => '<option value="' + k + '" ' + (k === "applied" ? "selected" : "") + ">" + esc3(label) + "</option>").join("");
   return '<div class="od-bonus-assigned">' + rows2.map(([type, key, v]) => {
     const own = type === "skill" ? find(skills, key) : null, label = own?.[1] || key, category = own?.[2] || b.skillCategories?.[key] || "applied";
-    return '<div class="od-compact-bonus-row" data-bonus-row data-type="' + type + '" data-key="' + esc2(key) + '"><span class="od-bonus-label"><b>' + esc2(label) + "</b><small>" + esc2(type === "attribute" ? "Characteristic" : SKILL_CATEGORIES.find(([k]) => k === category)?.[1] || "Skill") + '</small></span><input type="number" name="' + esc2((type === "attribute" ? attrName : skillName) + key) + '" value="' + v + '" min="-999" max="999" step="1" aria-label="' + esc2(label) + ' bonus">' + (type === "skill" ? '<input type="hidden" name="' + esc2(categoryName + key) + '" value="' + esc2(category) + '">' : "") + '<button type="button" data-bonus-remove title="Remove bonus" aria-label="Remove ' + esc2(label) + ' bonus">\xD7</button></div>';
+    return '<div class="od-compact-bonus-row" data-bonus-row data-type="' + type + '" data-key="' + esc3(key) + '"><span class="od-bonus-label"><b>' + esc3(label) + "</b><small>" + esc3(type === "attribute" ? "Characteristic" : SKILL_CATEGORIES.find(([k]) => k === category)?.[1] || "Skill") + '</small></span><input type="number" name="' + esc3((type === "attribute" ? attrName : skillName) + key) + '" value="' + v + '" min="-999" max="999" step="1" aria-label="' + esc3(label) + ' bonus">' + (type === "skill" ? '<input type="hidden" name="' + esc3(categoryName + key) + '" value="' + esc3(category) + '">' : "") + '<button type="button" data-bonus-remove title="Remove bonus" aria-label="Remove ' + esc3(label) + ' bonus">\xD7</button></div>';
   }).join("") + '</div><div class="od-compact-bonus-picker"><label>Characteristic' + (allowSkills ? " / skill" : "") + '<select data-bonus-choice><option value="">Choose bonus</option><optgroup label="Characteristics">' + options("a", ATTRIBUTES.map((k) => [k, k])) + "</optgroup>" + (allowSkills ? '<optgroup label="Skills">' + options("s", skills) + "</optgroup>" : "") + '</select></label><label>Bonus<input data-bonus-value type="number" value="1" min="-999" max="999" step="1"></label><button type="button" data-bonus-add title="Add selected bonus" aria-label="Add selected bonus">+</button></div>' + (allowSkills ? '<details class="od-new-bonus-skill"><summary>New skill</summary><div class="od-bonus-new-fields"><label>New skill name<input data-new-bonus-name maxlength="40"></label><label>Bonus<input data-new-bonus-value type="number" value="1" min="-999" max="999" step="1"></label><label data-new-bonus-category>Category<select>' + categories + '</select></label><button type="button" data-bonus-new title="Add new skill bonus" aria-label="Add new skill bonus">+</button></div></details>' : "");
 }
 function readCompactBonuses(root) {
@@ -1912,9 +1925,9 @@ var ITEM_TYPES = [["consumable", "Usable"], ["resource", "Resource"], ["ammo", "
 function itemEditor({ existing = {}, type = "resource", skills = [], parts = [], ammunition = [] }) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-item-editor";
-  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc(label)}<input name="${name}" type="${inputType}" value="${esc(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "abilityAmount", "effectAmount", "chargeMax", "charges", "chargeCost"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
-  const select = (name, label, options, value) => `<label>${esc(label)}<select name="${name}">${options.map(([k, l]) => `<option value="${esc(k)}" ${k === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
-  const checkbox = (name, label, checked) => `<label class="od-check"><input name="${name}" type="checkbox" ${checked ? "checked" : ""}>${esc(label)}</label>`;
+  const field = (name, label, value = "", inputType = "text", max = 999) => `<label>${esc2(label)}<input name="${name}" type="${inputType}" value="${esc2(value)}" ${inputType === "number" ? `min="${["damage", "accuracy", "penetration", "abilityAccuracy"].includes(name) || name.startsWith("abilityAttr:") || name === "abilityBonusValue" ? -999 : 0}" max="${max}" step="${["abilityCost", "abilityAmount", "effectAmount", "chargeMax", "charges", "chargeCost"].includes(name) ? 0.5 : 1}"` : 'maxlength="120"'}></label>`;
+  const select = (name, label, options, value) => `<label>${esc2(label)}<select name="${name}">${options.map(([k, l]) => `<option value="${esc2(k)}" ${k === value ? "selected" : ""}>${esc2(l)}</option>`).join("")}</select></label>`;
+  const checkbox = (name, label, checked) => `<label class="od-check"><input name="${name}" type="checkbox" ${checked ? "checked" : ""}>${esc2(label)}</label>`;
   const values = { ...existing, kind: type, acceptsMagazines: false };
   values.slots ?? (values.slots = [existing.slot || "any"]);
   const skillChoices = [...skills];
@@ -1933,7 +1946,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     values.bonuses.skillCategories = categories;
   }
   for (const key of Object.keys(values.bonuses?.skills || {})) if (!skillChoices.some(([k]) => k === key)) skillChoices.push([key, key]);
-  dialog.innerHTML = `<form><h2>${existing.id ? "Edit item" : "New item"}</h2>${select("kind", "Type", ITEM_TYPES, type)}${field("name", "Name", existing.name || "")}${field("quantity", "Quantity / ammo reserve", existing.quantity ?? 1, "number", 999999)}<div data-type-fields></div><label>Description<textarea name="description" maxlength="2000">${esc(existing.description || "")}</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></div></form>`;
+  dialog.innerHTML = `<form><h2>${existing.id ? "Edit item" : "New item"}</h2>${select("kind", "Type", ITEM_TYPES, type)}${field("name", "Name", existing.name || "")}${field("quantity", "Quantity / ammo reserve", existing.quantity ?? 1, "number", 999999)}<div data-type-fields></div><label>Description<textarea name="description" maxlength="2000">${esc2(existing.description || "")}</textarea></label><div class="cp-row"><button type="button" data-cancel>Cancel</button><button type="submit">Save</button></div></form>`;
   const form = dialog.querySelector("form"), host = dialog.querySelector("[data-type-fields]");
   const rangeEditor = (prefix, value = {}) => "";
   const unusedRangeEditor = (prefix, value = {}) => `<fieldset class="od-range-reduction"><legend>Range penalty reduction \xB7 per band</legend>${RANGE_BANDS.map(([key, label]) => field(prefix + key, label, value[key] || 0, "number")).join("")}</fieldset>`;
@@ -1943,7 +1956,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
   const abilityDrafts = new Map((existing.abilities || []).map((a) => [a.id, structuredClone(a)]));
   function abilityRow(a = {}) {
     const kind = a.kind || (a.id ? "skill" : "utility"), currency = values.kind === "artifact" ? "Charge cost" : "Mana cost";
-    return '<fieldset class="od-ability-row" data-ability-id="' + esc(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["check", "Skill check"], ["utility", "Narrative ability"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"], ...values.kind === "artifact" ? [["mana", "Restore mana"], ["heal", "Heal body HP"]] : []], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ["mana", "heal"].includes(kind) ? field("abilityAmount", kind === "mana" ? "Mana restored" : "Body HP restored", a.effectAmount || 1, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + (kind === "utility" ? '<details class="od-narrative-fields" ' + (a.statusName ? "open" : "") + '><summary>Narrative status \xB7 optional</summary><label>Status name<input name="abilityStatusName" maxlength="80" value="' + esc(a.statusName || "") + '"></label><label>Status description<textarea name="abilityStatusDescription" maxlength="2000">' + esc(a.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target on use. Adds a reminder only.</p></details>' : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
+    return '<fieldset class="od-ability-row" data-ability-id="' + esc2(a.id || crypto.randomUUID()) + '"><legend>Ability</legend><div class="od-ability-heading">' + field("abilityName", "Name", a.name || "") + select("abilityKind", "Type", [["check", "Skill check"], ["utility", "Narrative ability"], ["bonus", "Activate bonuses"], ["attack", "Attack"], ["skill", "Granted skill"], ...values.kind === "artifact" ? [["mana", "Restore mana"], ["heal", "Heal body HP"]] : []], kind) + '</div><div class="od-ability-numbers">' + field("abilityLevel", "Skill level", a.level || 0, "number", 10) + (kind === "skill" ? "" : field("abilityCost", currency, a.cost || 0, "number")) + (kind === "attack" ? field("abilityDamage", "Damage", a.damage || 0, "number") + field("abilityAccuracy", "Accuracy", a.accuracy || 0, "number") : ["mana", "heal"].includes(kind) ? field("abilityAmount", kind === "mana" ? "Mana restored" : "Body HP restored", a.effectAmount || 1, "number") : "") + "</div>" + (kind === "bonus" ? compactBonusEditor(a.bonuses, skillChoices, { prefix: "ability", label: "Bonuses when activated" }) : "") + (kind === "utility" ? '<details class="od-narrative-fields" ' + (a.statusName ? "open" : "") + '><summary>Narrative status \xB7 optional</summary><label>Status name<input name="abilityStatusName" maxlength="80" value="' + esc2(a.statusName || "") + '"></label><label>Status description<textarea name="abilityStatusDescription" maxlength="2000">' + esc2(a.statusDescription || "") + '</textarea></label><p class="cp-muted">Choose a target on use. Adds a reminder only.</p></details>' : "") + '<details class="od-ability-description"><summary>Description</summary><label>Ability description<textarea name="abilityDescription" maxlength="2000" rows="2">' + esc2(a.description || "") + '</textarea></label></details><button type="button" data-remove-ability title="Remove ability" aria-label="Remove ability">\xD7</button></fieldset>';
   }
   function readAbilityRow(row) {
     const previous = abilityDrafts.get(row.dataset.abilityId) || {}, get2 = (name, fallback = "") => row.querySelector('[name="' + name + '"]')?.value ?? fallback;
@@ -1976,7 +1989,7 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
     let html = "";
     if (kind === "consumable") {
       html += select("subtype", "Use type", [["grenade", "Grenade \xB7 placeholder"], ["medkit", "Medkit"], ["repairkit", "Repair kit"], ["stim", "Stim"]], values.subtype || "grenade");
-      html += '<label>Use skill \xB7 optional<input name="useSkill" maxlength="80" list="od-item-use-skills" value="' + esc(values.useSkill || "") + '" placeholder="None \xB7 no check"></label><datalist id="od-item-use-skills">' + skillChoices.map(([key, label]) => '<option value="' + esc(label) + '"></option>').join("") + '</datalist><p class="cp-muted">Known skill: skill check. Unknown skill: choose a characteristic, then d100 vs d100. Failed checks spend the item.</p>';
+      html += '<label>Use skill \xB7 optional<input name="useSkill" maxlength="80" list="od-item-use-skills" value="' + esc2(values.useSkill || "") + '" placeholder="None \xB7 no check"></label><datalist id="od-item-use-skills">' + skillChoices.map(([key, label]) => '<option value="' + esc2(label) + '"></option>').join("") + '</datalist><p class="cp-muted">Known skill: skill check. Unknown skill: choose a characteristic, then d100 vs d100. Failed checks spend the item.</p>';
       if (["medkit", "repairkit"].includes(values.subtype)) html += field("healCritical", "Critical wounds restored", values.healCritical ?? 1, "number");
       if (values.subtype === "stim") html += bonusEditor(values.bonuses, false);
       if (!values.subtype || values.subtype === "grenade") html += '<p class="cp-muted">Grenades have no action yet.</p>';
@@ -1991,11 +2004,11 @@ function itemEditor({ existing = {}, type = "resource", skills = [], parts = [],
       html += select("weaponKind", "Weapon type", [["melee", "Melee"], ["ranged", "Ranged"]], values.weaponKind || "melee") + field("accuracy", "Accuracy", values.accuracy ?? 0, "number");
       if (values.weaponKind === "ranged") {
         html += select("weaponCategory", "Weapon category", WEAPON_CATEGORIES, values.weaponCategory || "") + rangeEditor("weaponRange:", values.rangeReduction);
-        html += field("capacity", "Internal capacity", values.capacity || 6, "number") + field("loaded", "Loaded rounds \xB7 GM correction", values.loaded || 0, "number") + select("loadedAmmoId", "Loaded ammunition", [["", "Empty"], ...ammunition.map((a) => [a.id, a.name])], values.loadedAmmoId || "") + "<fieldset><legend>Compatible ammunition</legend>" + ammunition.map((a) => checkbox("ammoCompatible", a.name, (values.ammoIds || []).includes(a.id)).replace('name="ammoCompatible"', 'name="ammoCompatible" value="' + esc(a.id) + '"')).join("") + "</fieldset>";
+        html += field("capacity", "Internal capacity", values.capacity || 6, "number") + field("loaded", "Loaded rounds \xB7 GM correction", values.loaded || 0, "number") + select("loadedAmmoId", "Loaded ammunition", [["", "Empty"], ...ammunition.map((a) => [a.id, a.name])], values.loadedAmmoId || "") + "<fieldset><legend>Compatible ammunition</legend>" + ammunition.map((a) => checkbox("ammoCompatible", a.name, (values.ammoIds || []).includes(a.id)).replace('name="ammoCompatible"', 'name="ammoCompatible" value="' + esc2(a.id) + '"')).join("") + "</fieldset>";
       } else html += field("damage", "Damage", values.damage ?? 0, "number");
     }
     if (["armor", "shield", "prosthesis"].includes(kind)) {
-      html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "prosthesis" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "prosthesis" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc(key) + '"')).join("") + "</fieldset>";
+      html += field("armor", "Armor", values.armor ?? 0, "number") + field("criticalMax", kind === "prosthesis" ? "Body part HP bonus" : "Critical durability", values.criticalMax ?? 1, "number") + (kind === "prosthesis" ? "" : field("criticalDamage", "Critical damage taken", values.criticalDamage ?? 0, "number")) + '<fieldset data-equipment-slots class="od-equipment-slots"><legend>Equipment slots \xB7 choose allowed parts</legend>' + [["any", "Any part"], ...parts, ...values.slots.filter((key) => key !== "any" && !parts.some(([k]) => k === key)).map((key) => [key, key])].map(([key, label]) => checkbox("equipmentSlot", label, values.slots.includes(key)).replace('name="equipmentSlot"', 'name="equipmentSlot" value="' + esc2(key) + '"')).join("") + "</fieldset>";
       if (kind === "prosthesis") html += '<p class="cp-muted">Adds maximum body-part HP. Equipping does not heal wounds.</p>';
       if (kind === "prosthesis") html += checkbox("playerRemovable", "Player may equip / remove this prosthesis", values.playerRemovable);
       html += compactBonusEditor(values.bonuses, skillChoices, { label: ["armor", "shield"].includes(kind) ? "Enchantments \xB7 passive bonuses" : "Passive bonuses" });
@@ -2064,14 +2077,14 @@ function skillEditor(o, key) {
   const existing = key && Object.hasOwn(o.skills, key), core = ["Melee", "Parry"].includes(key);
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog";
-  dialog.innerHTML = `<form><h2>${existing ? "Edit skill" : "New skill"}</h2><label>Name<input name="name" required maxlength="40" value="${esc(existing ? o.skillLabels[key] || key : "")}"></label><label>Description<textarea name="description" maxlength="2000">${esc(o.skillDescriptions?.[key] || "")}</textarea></label><label>Base level<input name="level" type="number" min="0" max="${skillCap(o.skillCategories[key] || "applied")}" value="${existing ? o.skills[key] : 0}"></label><label>Category<select name="category">${SKILL_CATEGORIES.map(([c, label]) => `<option value="${c}" ${o.skillCategories[key] === c ? "selected" : ""}>${label}</option>`).join("")}</select></label><label class="od-check"><input name="strength" type="checkbox" ${o.skillStrengthBonuses[key] ? "checked" : ""}>Strength bonus for attack damage</label><fieldset><legend>Perks</legend>${RANGE_BANDS.map(([band, label]) => `<label>${esc(label)} \xB7 penalty reduction<input name="perkRange:${band}" type="number" min="0" max="999" value="${o.skillRangeReduction?.[key]?.[band] || 0}"></label>`).join("")}<div data-perks></div><button type="button" data-add-perk>+ Perk</button></fieldset><div class="cp-row"><button type="button" data-cancel>Cancel</button>${existing && !core ? '<button type="button" class="danger" data-delete>Delete skill</button>' : ""}<button type="submit">Save</button></div></form>`;
+  dialog.innerHTML = `<form><h2>${existing ? "Edit skill" : "New skill"}</h2><label>Name<input name="name" required maxlength="40" value="${esc2(existing ? o.skillLabels[key] || key : "")}"></label><label>Description<textarea name="description" maxlength="2000">${esc2(o.skillDescriptions?.[key] || "")}</textarea></label><label>Base level<input name="level" type="number" min="0" max="${skillCap(o.skillCategories[key] || "applied")}" value="${existing ? o.skills[key] : 0}"></label><label>Category<select name="category">${SKILL_CATEGORIES.map(([c, label]) => `<option value="${c}" ${o.skillCategories[key] === c ? "selected" : ""}>${label}</option>`).join("")}</select></label><label class="od-check"><input name="strength" type="checkbox" ${o.skillStrengthBonuses[key] ? "checked" : ""}>Strength bonus for attack damage</label><fieldset><legend>Perks</legend>${RANGE_BANDS.map(([band, label]) => `<label>${esc2(label)} \xB7 penalty reduction<input name="perkRange:${band}" type="number" min="0" max="999" value="${o.skillRangeReduction?.[key]?.[band] || 0}"></label>`).join("")}<div data-perks></div><button type="button" data-add-perk>+ Perk</button></fieldset><div class="cp-row"><button type="button" data-cancel>Cancel</button>${existing && !core ? '<button type="button" class="danger" data-delete>Delete skill</button>' : ""}<button type="submit">Save</button></div></form>`;
   const category = dialog.querySelector('[name="category"]'), level = dialog.querySelector('[name="level"]');
   category.addEventListener("change", () => {
     level.max = skillCap(category.value);
     level.value = Math.min(Number(level.value), Number(level.max));
   });
   const list = dialog.querySelector("[data-perks]");
-  const add = (value) => list.insertAdjacentHTML("beforeend", `<div class="cp-row"><input name="perk" maxlength="40" value="${esc(value)}" aria-label="Perk"><textarea name="perkDescription" maxlength="2000" aria-label="Perk description" placeholder="Perk description">${esc(o.skillPerkDescriptions?.[key]?.[value] || "")}</textarea><button type="button" data-remove-perk aria-label="Remove perk">\xD7</button></div>`);
+  const add = (value) => list.insertAdjacentHTML("beforeend", `<div class="cp-row"><input name="perk" maxlength="40" value="${esc2(value)}" aria-label="Perk"><textarea name="perkDescription" maxlength="2000" aria-label="Perk description" placeholder="Perk description">${esc2(o.skillPerkDescriptions?.[key]?.[value] || "")}</textarea><button type="button" data-remove-perk aria-label="Remove perk">\xD7</button></div>`);
   for (const p of o.skillPerks[key] || []) add(p);
   document.body.append(dialog);
   return new Promise((resolve) => {
@@ -5924,7 +5937,7 @@ function libraryFromScenes(scenes, sanitize) {
 function formDialog(title, fields, { danger = false, message = "", onChange, submitLabel = "Save" } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "od-dialog";
-  dialog.innerHTML = `<form><h2>${esc(title)}</h2>${message ? `<p>${esc(message)}</p>` : ""}${fields.map((f) => `<label>${esc(f.label)}${f.options ? `<select name="${esc(f.name)}" ${f.required ? "required" : ""}>${f.options.map(([v, l]) => `<option value="${esc(v)}" ${v === f.value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>` : f.type === "textarea" ? `<textarea name="${esc(f.name)}" maxlength="2000">${esc(f.value)}</textarea>` : `<input name="${esc(f.name)}" type="${esc(f.type || "text")}" value="${esc(f.value ?? "")}" ${f.required ? "required" : ""} ${f.type === "number" ? `min="${f.min ?? 0}" max="${f.max ?? 999999}" step="1"` : 'maxlength="120"'}>`}</label>`).join("")}<div class="cp-row"><button type="button" data-cancel>Cancel</button><button type="submit" class="${danger ? "danger" : ""}">${danger ? "Apply" : esc(submitLabel)}</button></div></form>`;
+  dialog.innerHTML = `<form><h2>${esc2(title)}</h2>${message ? `<p>${esc2(message)}</p>` : ""}${fields.map((f) => `<label>${esc2(f.label)}${f.options ? `<select name="${esc2(f.name)}" ${f.required ? "required" : ""}>${f.options.map(([v, l]) => `<option value="${esc2(v)}" ${v === f.value ? "selected" : ""}>${esc2(l)}</option>`).join("")}</select>` : f.type === "textarea" ? `<textarea name="${esc2(f.name)}" maxlength="2000">${esc2(f.value)}</textarea>` : `<input name="${esc2(f.name)}" type="${esc2(f.type || "text")}" value="${esc2(f.value ?? "")}" ${f.required ? "required" : ""} ${f.type === "number" ? `min="${f.min ?? 0}" max="${f.max ?? 999999}" step="1"` : 'maxlength="120"'}>`}</label>`).join("")}<div class="cp-row"><button type="button" data-cancel>Cancel</button><button type="submit" class="${danger ? "danger" : ""}">${danger ? "Apply" : esc2(submitLabel)}</button></div></form>`;
   document.body.append(dialog);
   if (onChange) dialog.querySelector("form").addEventListener("change", (event) => onChange(event.target.form, event));
   return new Promise((resolve) => {
@@ -6270,12 +6283,12 @@ function installCharacterTools(host) {
         if (event.target.name !== "target") return;
         if (form.elements.gear) {
           const target3 = host.getToken(form.elements.target.value || tokenId);
-          form.elements.gear.innerHTML = '<option value="">Choose damaged armor</option>' + (target3 ? repairOptions(target3).map(([key, label]) => '<option value="' + esc(key) + '">' + esc(label) + "</option>").join("") : "");
+          form.elements.gear.innerHTML = '<option value="">Choose damaged armor</option>' + (target3 ? repairOptions(target3).map(([key, label]) => '<option value="' + esc2(key) + '">' + esc2(label) + "</option>").join("") : "");
           return;
         }
         if (!form.elements.part) return;
         const target2 = host.getToken(form.elements.target.value || tokenId);
-        form.elements.part.innerHTML = target2 ? partsFor(target2).map(([key, label]) => '<option value="' + esc(key) + '">' + esc(label) + "</option>").join("") : "";
+        form.elements.part.innerHTML = target2 ? partsFor(target2).map(([key, label]) => '<option value="' + esc2(key) + '">' + esc2(label) + "</option>").join("") : "";
       } });
       if (!value) return;
       check(tokenId);
@@ -6450,15 +6463,15 @@ function installCharacterTools(host) {
     const vehicle = host.tracker(token).avallon.vehicle;
     if (!vehicle?.enabled && getRole() !== "GM") return "";
     const driver = vehicle?.pilotTokenId && getToken(vehicle.pilotTokenId), canExit = getRole() === "GM" || driver && canControl(driver);
-    return '<div class="cp-screen cp-row od-vehicle"><span class="cp-section-title">Vehicle</span>' + (vehicle?.enabled ? vehicle.pilotTokenId ? '<span class="cp-pill">Driver: ' + esc(driver?.name || "Unavailable") + "</span>" + (canExit ? '<button type="button" data-od-action="vehicle-exit" title="Exit vehicle">Exit vehicle</button>' : "") : '<span class="cp-muted">No driver</span><button type="button" data-od-action="vehicle-enter" title="Enter vehicle">Enter vehicle</button>' : "") + (getRole() === "GM" ? '<button type="button" data-od-action="vehicle-toggle" title="' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + '">' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + "</button>" : "") + "</div>";
-  }, syncPool: schedulePoolScan, isBusy: () => busy, renderInventory: (tracker) => disabledWhileBusy(inventoryView(tracker, getRole() === "GM")), renderTemplates: () => getRole() !== "GM" ? "" : disabledWhileBusy(`${storageError ? `<p class="cp-banner err">Local library could not be read: ${esc(storageError)}. Export JSON before replacing it.</p>` : ""}${templatesView(library, getRole() === "GM")}`) };
+    return '<div class="cp-screen cp-row od-vehicle"><span class="cp-section-title">Vehicle</span>' + (vehicle?.enabled ? vehicle.pilotTokenId ? '<span class="cp-pill">Driver: ' + esc2(driver?.name || "Unavailable") + "</span>" + (canExit ? '<button type="button" data-od-action="vehicle-exit" title="Exit vehicle">Exit vehicle</button>' : "") : '<span class="cp-muted">No driver</span><button type="button" data-od-action="vehicle-enter" title="Enter vehicle">Enter vehicle</button>' : "") + (getRole() === "GM" ? '<button type="button" data-od-action="vehicle-toggle" title="' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + '">' + (vehicle?.enabled ? "Make ordinary character" : "Mark as vehicle") + "</button>" : "") + "</div>";
+  }, syncPool: schedulePoolScan, isBusy: () => busy, renderInventory: (tracker) => disabledWhileBusy(inventoryView(tracker, getRole() === "GM")), renderTemplates: () => getRole() !== "GM" ? "" : disabledWhileBusy(`${storageError ? `<p class="cp-banner err">Local library could not be read: ${esc2(storageError)}. Export JSON before replacing it.</p>` : ""}${templatesView(library, getRole() === "GM")}`) };
 }
 
 // ui/statusTools.js
 function statusView(o, gm) {
   const rows2 = o.statuses || [];
   if (!rows2.length && !gm) return "";
-  return '<div class="cp-statuses cp-row">' + rows2.map((s) => '<span class="cp-status" data-narrative-status="' + esc(s.id) + '"><b>' + esc(s.name) + "</b>" + descriptionButton(s.name, [s.description, s.sourceName ? "Source: " + s.sourceName : ""].filter(Boolean).join("\n")) + (gm ? '<button type="button" data-status-action="remove" data-id="' + esc(s.id) + '" aria-label="Remove ' + esc(s.name) + ' status" title="Remove status">\xD7</button>' : "") + "</span>").join("") + (gm ? '<button type="button" data-status-action="add" title="Add narrative status">+ Status</button>' : "") + "</div>";
+  return '<div class="cp-statuses cp-row">' + rows2.map((s) => '<span class="cp-status" data-narrative-status="' + esc2(s.id) + '"><b>' + esc2(s.name) + "</b>" + descriptionButton(s.name, [s.description, s.sourceName ? "Source: " + s.sourceName : ""].filter(Boolean).join("\n")) + (gm ? '<button type="button" data-status-action="remove" data-id="' + esc2(s.id) + '" aria-label="Remove ' + esc2(s.name) + ' status" title="Remove status">\xD7</button>' : "") + "</span>").join("") + (gm ? '<button type="button" data-status-action="add" title="Add narrative status">+ Status</button>' : "") + "</div>";
 }
 function installStatusTools(host) {
   let busy = false;
@@ -6501,7 +6514,7 @@ function artifactActions(item, effects = []) {
 function showArtifactMenu(item, effects) {
   const rows2 = artifactActions(item, effects), dialog = document.createElement("dialog");
   dialog.className = "od-dialog od-artifact-menu";
-  dialog.innerHTML = '<div class="cp-row"><h2>' + esc(item.name) + '</h2><button type="button" data-menu-close aria-label="Close artifact menu">\xD7</button></div><p>' + item.charges + " / " + item.chargeMax + " charges</p>" + (!item.equippedPart ? '<p>Equip this artifact to use its actions.</p><button type="button" data-menu-choice="equip">Equip</button>' : "") + '<div class="od-artifact-actions">' + rows2.map((a) => '<button type="button" class="cp-skill-card od-artifact-option" data-menu-choice="' + esc("ability:" + a.id) + '" ' + (!item.equippedPart || item.quantity < 1 || item.charges < a.cost || a.active ? "disabled" : "") + "><span><b>" + esc(a.name) + "</b><small>" + esc(artifactActionLabel(a.kind)) + (a.level != null ? " \xB7 Lvl " + a.level : "") + (a.active ? " \xB7 active" : "") + '</small></span><span class="cp-pill">Cost ' + a.cost + " charges</span></button>").join("") + (rows2.length ? "" : "<p>No active actions. Passive properties work while equipped.</p>") + "</div>";
+  dialog.innerHTML = '<div class="cp-row"><h2>' + esc2(item.name) + '</h2><button type="button" data-menu-close aria-label="Close artifact menu">\xD7</button></div><p>' + item.charges + " / " + item.chargeMax + " charges</p>" + (!item.equippedPart ? '<p>Equip this artifact to use its actions.</p><button type="button" data-menu-choice="equip">Equip</button>' : "") + '<div class="od-artifact-actions">' + rows2.map((a) => '<button type="button" class="cp-skill-card od-artifact-option" data-menu-choice="' + esc2("ability:" + a.id) + '" ' + (!item.equippedPart || item.quantity < 1 || item.charges < a.cost || a.active ? "disabled" : "") + "><span><b>" + esc2(a.name) + "</b><small>" + esc2(artifactActionLabel(a.kind)) + (a.level != null ? " \xB7 Lvl " + a.level : "") + (a.active ? " \xB7 active" : "") + '</small></span><span class="cp-pill">Cost ' + a.cost + " charges</span></button>").join("") + (rows2.length ? "" : "<p>No active actions. Passive properties work while equipped.</p>") + "</div>";
   document.body.append(dialog);
   dialog.showModal();
   return new Promise((resolve) => {
@@ -6921,7 +6934,7 @@ function installCompactButtons() {
 
 // ui/compactHud.js
 function compactHud({ token, tracker, floating, target, targetData, skills, weapons, draft: draft2, parts, ammunition }) {
-  return `<section class="od-hud cp-screen"><div class="cp-row"><div><span class="cp-section-title">Character</span><h3>${esc(token.name || "Character")}</h3></div><span class="cp-pill">${Object.entries(tracker.body).filter(([k]) => !["Shield", "Special"].includes(k)).reduce((n2, [, p]) => n2 + p.current, 0)} HP</span><button type="button" data-action="${floating ? "close-character-hud" : "open-character-hud"}" class="secondary">${floating ? "Close HUD" : "Floating HUD"}</button></div><div class="od-hud-grid"><div class="cp-card"><div class="cp-section-title">Weapon & skill</div><label>Weapon<select data-hud-attack-field="weaponName">${weapons}</select></label><label>Skill<select data-hud-attack-field="skill">${skills}</select></label>${ammunition.replaceAll("data-attack-field=", "data-hud-attack-field=")}</div><div class="cp-card"><div class="cp-section-title">Target</div><div class="cp-row"><b>${esc(target?.name || "No target selected")}</b><span data-target-distance class="od-target-distance"></span><span data-range-modifier="attack" class="od-range-readout cp-muted"></span><button type="button" data-action="pick-attack-target">Pick on map</button></div><label>Body zone<select data-hud-attack-field="targetPart">${parts.map(([key, label]) => `<option value="${esc(key)}" ${key === draft2.targetPart ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><p class="cp-muted">${targetData ? "Target selected \xB7 V1 armor, Parry and damage rules" : "Select a visible target to attack."}</p></div><div class="cp-card"><div class="cp-section-title">Action</div><label>Attack bonus<input type="number" value="${Number(draft2.attackBonuses) || 0}" data-hud-attack-field="attackBonuses"></label><label>Attack penalty<input type="number" value="${Number(draft2.attackPenalties) || 0}" data-hud-attack-field="attackPenalties"></label><button type="button" data-action="perform-attack" ${!target ? "disabled" : ""}>Attack</button></div></div><p class="cp-muted" role="status">${esc(tracker.lastRoll?.summary || "No rolls yet.")}</p></section>`;
+  return `<section class="od-hud cp-screen"><div class="cp-row"><div><span class="cp-section-title">Character</span><h3>${esc2(token.name || "Character")}</h3></div><span class="cp-pill">${Object.entries(tracker.body).filter(([k]) => !["Shield", "Special"].includes(k)).reduce((n2, [, p]) => n2 + p.current, 0)} HP</span><button type="button" data-action="${floating ? "close-character-hud" : "open-character-hud"}" class="secondary">${floating ? "Close HUD" : "Floating HUD"}</button></div><div class="od-hud-grid"><div class="cp-card"><div class="cp-section-title">Weapon & skill</div><label>Weapon<select data-hud-attack-field="weaponName">${weapons}</select></label><label>Skill<select data-hud-attack-field="skill">${skills}</select></label>${ammunition.replaceAll("data-attack-field=", "data-hud-attack-field=")}</div><div class="cp-card"><div class="cp-section-title">Target</div><div class="cp-row"><b>${esc2(target?.name || "No target selected")}</b><span data-target-distance class="od-target-distance"></span><span data-range-modifier="attack" class="od-range-readout cp-muted"></span><button type="button" data-action="pick-attack-target">Pick on map</button></div><label>Body zone<select data-hud-attack-field="targetPart">${parts.map(([key, label]) => `<option value="${esc2(key)}" ${key === draft2.targetPart ? "selected" : ""}>${esc2(label)}</option>`).join("")}</select></label><p class="cp-muted">${targetData ? "Target selected \xB7 V1 armor, Parry and damage rules" : "Select a visible target to attack."}</p></div><div class="cp-card"><div class="cp-section-title">Action</div><label>Attack bonus<input type="number" value="${Number(draft2.attackBonuses) || 0}" data-hud-attack-field="attackBonuses"></label><label>Attack penalty<input type="number" value="${Number(draft2.attackPenalties) || 0}" data-hud-attack-field="attackPenalties"></label><button type="button" data-action="perform-attack" ${!target ? "disabled" : ""}>Attack</button></div></div><p class="cp-muted" role="status">${esc2(tracker.lastRoll?.summary || "No rolls yet.")}</p></section>`;
 }
 
 // shared.js
@@ -9969,7 +9982,7 @@ function renderSelectedToken() {
   const tokenLocked = !canUseToken(token);
   const bodyFieldDisabled = !canEditTokenData(token) ? "disabled" : "";
   const gmOnlyDisabled = !isEditable() ? "disabled" : "";
-  const showPartBlock = isEditable();
+  const showPartBlock = isEditable() || Boolean(playerId && data.avallon.owner.playerId === playerId);
   const lastRollText = data.lastRoll ? escapeHtml(data.lastRoll.summary || "Last roll recorded") : "No rolls synced yet";
   ui.selectionHint.textContent = selected ? "Selected on map" : "Showing current focus";
   ui.selectedTokenPanel.dataset.tokenId = token.id;
@@ -10021,7 +10034,7 @@ function renderSelectedToken() {
     `<pre class="console-output">${lastRollText}</pre>`,
     false
   ) : ""}
-      ${showPartBlock ? renderCollapsibleSection(
+      ${showPartBlock ? isEditable() ? renderCollapsibleSection(
     "Body Parts",
     `
                 <div class="row row-gap">
@@ -10059,7 +10072,7 @@ function renderSelectedToken() {
                 <div class="item-toolbar item-toolbar-bottom"><button type="button" class="square-icon-button" data-action="open-body-part-add" title="Add body part" aria-label="Add body part" ${bodyFieldDisabled}>+</button></div>
               `,
     true
-  ) : ""}
+  ) : renderCollapsibleSection("Body Parts", playerBodyPartsView(data, [SPECIAL_PART_NAME, ...getBodyPartNames(data)]), true) : ""}
       ${canViewOverlayPreview(token) ? renderCollapsibleSection(
     "Overlay Preview",
     `<pre class="console-output">${escapeHtml(formatOverlayPreviewText(data))}</pre>`,

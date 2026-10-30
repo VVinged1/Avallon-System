@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';import {installInitiativeMenus,changeInitiativeMembership,INITIATIVE_KEY} from '../initiative/contextMenu.js';
+const token=(id,layer='CHARACTER')=>({id,type:'IMAGE',layer,metadata:{}}),items=[token('a'),token('b'),token('mount','MOUNT'),token('map','MAP')];items[0].metadata[INITIATIVE_KEY]={count:'34',active:true};let role='GM';const menus={};
+const sdk={player:{getRole:async()=>role},contextMenu:{remove:async id=>delete menus[id],create:async menu=>menus[menu.id]=menu},scene:{items:{updateItems:async(ids,update)=>update(items.filter(i=>ids.includes(i.id)))}}};
+await installInitiativeMenus(sdk,{add:'add.svg',remove:'remove.svg'});assert.equal(Object.keys(menus).length,2);assert.deepEqual(menus['com.avallon.initiative/menu/add'].icons[0].filter.roles,['GM']);
+await menus['com.avallon.initiative/menu/add'].onClick({items});assert.equal(items[0].metadata[INITIATIVE_KEY].count,'34');assert.equal(items[0].metadata[INITIATIVE_KEY].active,true);assert.equal(items[1].metadata[INITIATIVE_KEY].count,'0');assert.equal(items[2].metadata[INITIATIVE_KEY].count,'0');assert.equal(items[3].metadata[INITIATIVE_KEY],undefined);
+await menus['com.avallon.initiative/menu/remove'].onClick({items:[items[1]]});assert.equal(items[1].metadata[INITIATIVE_KEY],undefined);assert.equal(items[0].metadata[INITIATIVE_KEY].count,'34');
+role='PLAYER';const before=JSON.stringify(items);await changeInitiativeMembership(sdk,items,false);assert.equal(JSON.stringify(items),before);
+role='GM';await changeInitiativeMembership(sdk,items,false);await changeInitiativeMembership(sdk,items,false);assert(items.every(item=>item.metadata[INITIATIVE_KEY]===undefined));
+console.log('Persistent context menus passed: explicit single/group add/remove, mixed selections, saved rolls, mounts, non-tokens and player denial.');

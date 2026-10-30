@@ -1,4 +1,5 @@
 export interface InitiativeItem {
+  imageUrl?: string;
   count: string;
   name: string;
   id: string;
