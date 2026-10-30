@@ -48,3 +48,5 @@ body {
 .initiative-token:focus-visible{outline:2px solid #d3ad6b;outline-offset:2px;border-radius:6px;}
 .initiative-sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
 .initiative-resize{position:fixed;right:0;bottom:0;width:16px;height:16px;padding:0!important;line-height:16px;font-size:13px;border:0!important;background:transparent!important;color:#d3ad6b;cursor:nwse-resize;touch-action:none;z-index:10;}
+
+.initiative-remove{position:absolute;right:1px;top:1px;z-index:2;width:19px;height:19px;line-height:17px;padding:0!important;border:1px solid #a17b50!important;border-radius:5px;background:#30241ef0!important;color:#f2e5ce!important;font-size:17px;cursor:pointer;}.initiative-remove:hover{background:#8d343a!important;}

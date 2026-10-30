@@ -101,6 +101,12 @@ export function InitiativeTracker() {
     [initiativeItems]
   );
 
+  async function handleRemoveClick(id:string){
+    try{if(role!=='GM'||await OBR.player.getRole()!=='GM')throw Error('Only the GM can remove participants.');
+      await OBR.scene.items.updateItems([id],items=>{for(const item of items)delete item.metadata[getPluginId('metadata')];});
+      setStatus('Removed from initiative.');
+    }catch(error){setStatus('Unable to remove participant.');await OBR.notification.show((error as Error).message||'Unable to remove participant.','ERROR');}
+  }
   async function handleNextClick() {
     if (role !== "GM" || sortedInitiativeItems.length === 0) return;
 
@@ -307,6 +313,7 @@ export function InitiativeTracker() {
                 onCountChange={(newCount) => {
                   handleInitiativeCountChange(initiative.id, newCount);
                 }}
+                onRemove={()=>void handleRemoveClick(initiative.id)}
                 showHidden={role === "GM"}
                 editable={role === "GM"}
               />
